@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tagarnina"
+description = "Constrained Feature Selection"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Guillermo Navas-Palencia", email = "g.navas-palencia@gmail.com" },
+]
+requires-python = ">=3.13"
+dependencies = [
+    "numpy",
+    "pandas",
+    "ortools",
+    "scikit-learn"
+]
+
+[tool.setuptools.packages.find]
+include = ["tagarnina*"]
