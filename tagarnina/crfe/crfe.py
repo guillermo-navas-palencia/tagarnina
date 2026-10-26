@@ -1,13 +1,11 @@
 import numbers
 import time
-from dataclasses import dataclass
 from numbers import Integral, Real
 from operator import attrgetter
 from typing import Any, Callable, Hashable, Self
 
 import numpy as np
 import numpy.typing as npt
-import ortools
 import pandas as pd
 from scipy.sparse import issparse
 
@@ -32,11 +30,14 @@ from sklearn.utils.validation import (
 )
 
 from ..optimization.constraints import AtLeastKConstraint, Constraints
-from ._log import FitLog, describe_constraints, verbose_logging
+from .history import History
+from .logger import CRFELogger, describe_input, describe_settings, describe_solver
+from .monitoring import Monitoring
 from .solver import CRFESolver
+from .termination import Termination
 
 
-def _select_columns(
+def select_columns(
     X: pd.DataFrame | npt.NDArray,
     *,
     columns: npt.NDArray
@@ -46,7 +47,7 @@ def _select_columns(
     return X[:, columns]
 
 
-def _importance_stats(
+def importance_stats(
     importances: npt.NDArray,
     *,
     kept: npt.NDArray
@@ -62,85 +63,32 @@ def _importance_stats(
     return float(retained), float(max(best - retained, 0.0))
 
 
-class _History:
-    """Per-round record of the supports fitted by the elimination loop."""
-
-    _FLOATS = (
-        "removed",
-        "n_feasible_probes",
-        "n_infeasible_probes",
-        "retained_importance",
-        "importance_gap",
-        "fit_time",
-        "solve_time",
-        "elapsed",
-    )
-
-    def __init__(self, *, scored: bool):
-        self.scored = scored
-        self.rows = []
-
-    def append(self, row: dict[str, Any]) -> None:
-        self.rows.append(row)
-
-    def to_dict(self) -> dict[str, npt.NDArray]:
-        keys = [*self._FLOATS, "score"] if self.scored else self._FLOATS
-
-        history = {
-            "n_features": np.array([r["n_features"] for r in self.rows], dtype=int),
-            "support": np.array([r["support"] for r in self.rows], dtype=bool),
-        }
-        for key in keys:
-            history[key] = np.array([r[key] for r in self.rows], dtype=float)
-        return history
+def get_step(*, step: int | float, n_features: int) -> int:
+    if 0.0 < step < 1.0:
+        return int(max(1, step * n_features))
+    return int(step)
 
 
-@dataclass(kw_only=True)
-class _Run:
-    """State of a fit: history, log and time spent in each step."""
-
-    scorer: Callable | None
-    history: _History
-    log: FitLog
-    start: float
-    fit_time: float = 0.0
-    solve_time: float = 0.0
-    score_time: float = 0.0
-    n_feasible_probes: int = 0
-    n_infeasible_probes: int = 0
-
-    def fit(
-        self,
-        estimator: BaseEstimator,
-        X: pd.DataFrame | npt.NDArray,
-        y: npt.NDArray,
-        /,
-        **fit_params: Any
-    ) -> float:
-        start = time.perf_counter()
-        estimator.fit(X, y, **fit_params)
-        elapsed = time.perf_counter() - start
-        self.fit_time += elapsed
-        return elapsed
-
-    def score(
-        self,
-        estimator: BaseEstimator,
-        X: pd.DataFrame | npt.NDArray,
-        y: npt.NDArray
-    ) -> float:
-        if self.scorer is None:
-            return np.nan
-
-        start = time.perf_counter()
-        score = float(self.scorer(estimator, X, y))
-        self.score_time += time.perf_counter() - start
-        return score
-
-    def record(self, row: dict[str, Any]) -> None:
-        row = {**row, "elapsed": time.perf_counter() - self.start}
-        self.history.append(row)
-        self.log.row(row)
+def resolve_n_features(
+    *,
+    n_features_to_select: int | float | None,
+    n_features: int
+) -> int:
+    if n_features_to_select is None:
+        return n_features // 2
+    if isinstance(n_features_to_select, numbers.Integral):
+        if not 0 < n_features_to_select <= n_features:
+            raise ValueError(
+                f"n_features_to_select must be in (0, {n_features}], "
+                f"got {n_features_to_select}."
+            )
+        return int(n_features_to_select)
+    if not 0.0 < n_features_to_select <= 1.0:
+        raise ValueError(
+            "n_features_to_select as a float must be in (0, 1], "
+            f"got {n_features_to_select}."
+        )
+    return max(1, int(n_features_to_select * n_features))
 
 
 class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
@@ -166,7 +114,7 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         Constraints that every selected subset must satisfy. If None, the
         elimination is the standard RFE.
 
-    strategy : {"greedy", "probing"}, default="greedy"
+    strategy : {"greedy", "probing"}, default="probing"
         Only used if `constraints` is not None.
 
         - "greedy": the `step` least important features are excluded and the
@@ -202,18 +150,25 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         Only used if `constraints` is not None. The importances of the active
         features are normalized to a maximum of 1 and this offset is added
         before they enter the solver objective, and must be in [0, 0.1]. With a
-        positive offset, features
-        with zero importance are kept unless the constraints force their
-        removal, instead of being dropped by an arbitrary tie-break. Features
-        with normalized importance below the offset are effectively tied with
-        zero importance. The ranking of the `step` least important features
-        does not depend on it.
+        positive offset, features with zero importance are kept unless the
+        constraints force their removal, instead of being dropped by an
+        arbitrary tie-break. Features with normalized importance below the
+        offset are effectively tied with zero importance. The ranking of
+        the `step` least important features does not depend on it.
+
+    callback : callable or None, default=None
+        Called as `callback(row)` after each fitted support, including the
+        final one. `row` is a dict with the `history_` fields of that fit
+        (`n_features`, `support`, `score`, `fit_time`, `solve_time`,
+        `elapsed`, ...) plus `iteration`. If it returns a truthy value the
+        fit stops and the support of that row is selected (the return value
+        is ignored for the final one). It is called between fits, so it cannot
+        interrupt a running fit. Exceptions propagate. Lambdas prevent the
+        selector from being pickled.
 
     verbose : int, default=0
-        0 shows nothing, 1 shows the log of the fit (settings, one line per
-        fitted support and a summary) and 2 adds the solver and model details.
-        The output is produced with the `logging` module (logger
-        `tagarnina`), so it can also be configured without `verbose`.
+        0 shows nothing, 1 prints the settings, one line per fitted support and
+        a summary, and 2 also prints the solver and model details.
 
     Attributes
     ----------
@@ -242,11 +197,11 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         the last support.
 
     summary_ : dict
-        `termination` reason, `wall_time` and `cpu_time` of the fit, the time
-        spent fitting (`fit_time`), solving (`solve_time`) and scoring
-        (`score_time`), the probes of the probing strategy by outcome
-        (`n_feasible_probes`, `n_infeasible_probes`), and `n_blocked`
-        features that could not be removed.
+        `termination` reason (a `Termination` member), `wall_time` and
+        `cpu_time` of the fit, the time spent fitting (`fit_time`), solving
+        (`solve_time`) and scoring (`score_time`), the probes of the probing
+        strategy by outcome (`n_feasible_probes`, `n_infeasible_probes`), and
+        `n_blocked` features that could not be removed.
     """
 
     _parameter_constraints: dict = {
@@ -267,10 +222,11 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         "importance_getter": [str, callable],
         "importance_params": [dict, None],
         "importance_offset": [Interval(Real, 0, 0.1, closed="both")],
+        "callback": [callable, None],
         "verbose": ["verbose"],
     }
 
-    _solver_params_constraints: dict = {
+    solver_params_constraints: dict = {
         "num_workers": [Interval(Integral, 1, None, closed="left")],
         "time_limit": [Interval(Real, 0, None, closed="neither")],
     }
@@ -282,12 +238,13 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         n_features_to_select: int | float | None = None,
         step: int | float = 1,
         constraints: Constraints | None = None,
-        strategy: str = "greedy",
+        strategy: str = "probing",
         solver_params: dict[str, Any] | None = None,
         scoring: str | Callable | None = None,
         importance_getter: str | Callable = "auto",
         importance_params: dict[str, Any] | None = None,
         importance_offset: float = 1e-3,
+        callback: Callable[[dict[str, Any]], Any] | None = None,
         verbose: int = 0
     ):
         self.estimator = estimator
@@ -300,6 +257,7 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         self.importance_getter = importance_getter
         self.importance_params = importance_params
         self.importance_offset = importance_offset
+        self.callback = callback
         self.verbose = verbose
 
     def fit(
@@ -335,17 +293,6 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         """
         self._validate_params()
 
-        with verbose_logging(self.verbose):
-            self._fit(X, y, **fit_params)
-
-        return self
-
-    def _fit(
-        self,
-        X: pd.DataFrame | npt.NDArray,
-        y: pd.Series | npt.NDArray,
-        **fit_params: dict[Hashable, Any]
-    ) -> None:
         start = time.perf_counter()
         cpu_start = time.process_time()
 
@@ -367,18 +314,21 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             if self.scoring is None
             else check_scoring(self.estimator, scoring=self.scoring)
         )
-        run = _Run(
+
+        monitor = Monitoring(
             scorer=scorer,
-            history=_History(scored=scorer is not None),
-            log=FitLog(
+            history=History(scored=scorer is not None),
+            log=CRFELogger(
+                verbose=self.verbose,
                 scored=scorer is not None,
                 solver=self.constraints is not None,
                 probing=self.constraints is not None and self.strategy == "probing"
             ),
+            callback=self.callback,
             start=start
         )
 
-        X_init = X
+        X_input = X
         X, y = validate_data(
             self,
             X=X,
@@ -391,15 +341,39 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             multi_output=True,
         )
 
+        X_rfe = X_input if isinstance(X_input, pd.DataFrame) else X
+        n_features = X.shape[1]
+        step = get_step(step=self.step, n_features=n_features)
+
         if self.constraints is None:
+            # Classical RFE scikit-learn implementation
             self.solver_ = None
+            n_select = resolve_n_features(
+                n_features_to_select=self.n_features_to_select,
+                n_features=n_features
+            )
+    
+            monitor.log.print_header(
+                lines=[
+                    *describe_input(estimator=self.estimator, X=X_rfe),
+                    *describe_settings(
+                        step=self.step,
+                        n_select=n_select,
+                        constraints=None,
+                        strategy=self.strategy,
+                        scoring=self.scoring
+                    )
+                ]
+            )
 
-            if isinstance(X_init, pd.DataFrame):
-                X_rfe = X_init
-            else:
-                X_rfe = X
-
-            termination = self._rfe(X=X_rfe, y=y, run=run, **fit_params)
+            support, ranking, termination = self._fit(
+                X=X_rfe,
+                y=y,
+                step=step,
+                n_select=n_select,
+                monitor=monitor,
+                fit_params=fit_params
+            )
         else:
             if feature_names is None:
                 feature_names = [f"x{i}" for i in range(self.n_features_in_)]
@@ -409,13 +383,15 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
                 non_numeric_features=non_numeric_features
             )
 
-            n_features = len(feature_names)
-            n_select = (
-                1
-                if self.n_features_to_select is None
-                else self._get_n_features_to_select(n_features)
-            )
+            if self.n_features_to_select is None:
+                n_select = 1
+            else:
+                n_select = resolve_n_features(
+                    n_features_to_select=self.n_features_to_select,
+                    n_features=n_features
+                )
 
+            # Translate the n_select features into an at_least_k constraint
             solver_constraints = Constraints(
                 constraints=[
                     *self.constraints.constraints,
@@ -433,175 +409,102 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
                 **(self.solver_params or {})
             )
 
-            X_rfe = X_init if isinstance(X_init, pd.DataFrame) else X
             X_dense = X.toarray() if issparse(X) else X
-            X_df = pd.DataFrame(data=X_dense, columns=feature_names).infer_objects()
+            X_df = pd.DataFrame(
+                data=X_dense, columns=feature_names
+            ).infer_objects()
 
             build_start = time.perf_counter()
             self.solver_.build_constraints(X=X_df)
             build_time = time.perf_counter() - build_start
 
-            params = self.solver_.solver.parameters
-            run.log.start(
-                [
-                    *self._start_lines(X=X_rfe, n_select=n_select),
-                    ("Constraints", describe_constraints(self.constraints)),
-                ],
-                details=[
-                    (
-                        "Solver",
-                        f"CP-SAT {ortools.__version__}, workers={params.num_workers}, "
-                        f"time_limit={params.max_time_in_seconds:g}s, "
-                        f"seed={params.random_seed}"
-                    ),
-                    (
-                        "Model",
-                        f"{self.solver_.n_variables} variables, "
-                        f"{self.solver_.n_constraints} constraints, built in "
-                        f"{build_time:.3f}s"
+            monitor.log.print_header(
+                lines=[
+                    *describe_input(estimator=self.estimator, X=X_rfe),
+                    *describe_settings(
+                        step=self.step,
+                        n_select=n_select,
+                        constraints=self.constraints,
+                        strategy=self.strategy,
+                        scoring=self.scoring
                     ),
                 ],
+                details=describe_solver(
+                    solver=self.solver_, build_time=build_time
+                )
             )
 
-            step = self._get_step(n_features)
-            support = np.ones(n_features, dtype=bool)
-            ranking = np.ones(n_features, dtype=int)
-
-            termination = "reached the target number of features"
-            while True:
-                features = np.flatnonzero(support)
-                n_remove = min(step, len(features) - n_select)
-                if n_remove < 1:
-                    break
-
-                estimator = clone(self.estimator)
-                X_features = _select_columns(X_rfe, columns=features)
-                fit_time = run.fit(estimator, X_features, y, **fit_params)
-
-                importances = np.zeros(n_features)
-                importances[features] = self._get_importances(
-                    estimator=estimator, X=X_features
-                )
-
-                ordered = [
-                    feature_names[i]
-                    for i in features[
-                        np.argsort(importances[features], kind="stable")
-                    ]
-                ]
-
-                # normalized importances plus a small offset, so that the solver
-                # keeps zero-importance features unless constraints force removal
-                weights = np.zeros(n_features)
-                top = importances[features].max()
-                weights[features] = (
-                    importances[features] / top if top > 0 else 0.0
-                ) + self.importance_offset
-
-                solve_start = time.perf_counter()
-                result = self.solver_.eliminate(
-                    weights=weights,
-                    ordered=ordered,
-                    n_remove=n_remove
-                )
-                solve_time = time.perf_counter() - solve_start
-                run.solve_time += solve_time
-                run.n_feasible_probes += result.n_feasible_probes
-                run.n_infeasible_probes += result.n_infeasible_probes
-
-                if result.status == "INFEASIBLE":
-                    termination = "no feasible elimination under the constraints"
-                    break
-                if result.status not in ("OPTIMAL", "FEASIBLE"):
-                    raise RuntimeError(
-                        f"{type(self).__name__}: the solver returned "
-                        f"{result.status}."
-                    )
-
-                solution = result.solution
-                candidates = result.candidates
-
-                removed = np.flatnonzero(support & ~solution)
-                for index in removed:
-                    if feature_names[index] in candidates:
-                        continue
-                    self.solver_.build_exclude_constraint(
-                        feature=feature_names[index]
-                    )
-
-                retained, gap = _importance_stats(
-                    importances, kept=support & solution
-                )
-                run.record({
-                    "n_features": int(support.sum()),
-                    "support": support.copy(),
-                    "removed": int(support.sum() - (support & solution).sum()),
-                    "n_feasible_probes": result.n_feasible_probes,
-                    "n_infeasible_probes": result.n_infeasible_probes,
-                    "retained_importance": retained,
-                    "importance_gap": gap,
-                    "fit_time": fit_time,
-                    "solve_time": solve_time,
-                    "score": run.score(estimator, X_features, y),
-                })
-
-                support = support & solution
-                ranking[~support] += 1
-
-            self._set_selected_features(
+            support, ranking, termination = self._fit_constrained(
                 X=X_rfe,
                 y=y,
-                support=support,
-                ranking=ranking,
-                run=run,
+                feature_names=feature_names,
+                step=step,
+                n_select=n_select,
+                monitor=monitor,
                 fit_params=fit_params
             )
 
+        self._set_selected_features(
+            X=X_rfe,
+            y=y,
+            support=support,
+            ranking=ranking,
+            monitor=monitor,
+            fit_params=fit_params
+        )
+
         self._summarize(
-            run=run,
+            monitor=monitor,
             termination=termination,
-            start=start,
             cpu_start=cpu_start
         )
 
-    def _rfe(
+        return self
+
+    def _fit(
         self,
         *,
         X: npt.NDArray | pd.DataFrame,
         y: npt.NDArray,
-        run: _Run,
-        **fit_params: dict[Hashable, Any]
-    ) -> str:
+        step: int,
+        n_select: int,
+        monitor: Monitoring,
+        fit_params: dict[str, Any]
+    ) -> tuple[npt.NDArray, npt.NDArray, Termination]:
         n_features = X.shape[1]
-        step = self._get_step(n_features)
-
-        n_features_to_select = self._get_n_features_to_select(n_features)
-        run.log.start(self._start_lines(X=X, n_select=n_features_to_select))
-
         support = np.ones(n_features, dtype=bool)
         ranking = np.ones(n_features, dtype=int)
+        termination = Termination.TARGET_REACHED
 
-        while support.sum() > n_features_to_select:
+        while support.sum() > n_select:
             features = np.flatnonzero(support)
             estimator = clone(self.estimator)
-            X_features = _select_columns(X, columns=features)
-            fit_time = run.fit(estimator, X_features, y, **fit_params)
+            X_features = select_columns(X, columns=features)
 
-            # Get importance and rank
-            importances = self._get_importances(estimator=estimator, X=X_features)
+            start = time.perf_counter()
+            estimator.fit(X_features, y, **fit_params)
+            fit_time = time.perf_counter() - start
 
-            ranks = np.argsort(importances, kind="stable")
+            importances = self._get_feature_importances(
+                estimator=estimator, X=X_features
+            )
 
-            # for sparse case ranks is matrix
-            ranks = np.ravel(ranks)
-
-            # Eliminate the worse features
-            threshold = min(step, support.sum() - n_features_to_select)
-
+            ranks = np.ravel(np.argsort(importances, kind="stable"))
+            threshold = min(step, support.sum() - n_select)
             kept = np.ones(len(features), dtype=bool)
             kept[ranks[:threshold]] = False
-            retained, gap = _importance_stats(importances, kept=kept)
-            run.record({
+            retained, gap = importance_stats(importances, kept=kept)
+
+            # Monitoring block
+            monitor.fit_time += fit_time
+
+            score = np.nan
+            if monitor.scorer is not None:
+                start = time.perf_counter()
+                score = float(monitor.scorer(estimator, X_features, y))
+                monitor.score_time += time.perf_counter() - start
+
+            monitor.record(row={
                 "n_features": int(support.sum()),
                 "support": support.copy(),
                 "removed": threshold,
@@ -611,94 +514,132 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
                 "importance_gap": gap,
                 "fit_time": fit_time,
                 "solve_time": 0.0,
-                "score": run.score(estimator, X_features, y),
+                "score": score,
             })
 
+            if monitor.stop:
+                termination = Termination.STOPPED
+                break
+
+            # Update support and ranking
             support[features[ranks[:threshold]]] = False
             ranking[~support] += 1
 
-        self._set_selected_features(
-            X=X,
-            y=y,
-            support=support,
-            ranking=ranking,
-            run=run,
-            fit_params=fit_params
-        )
-        return "reached the target number of features"
+        return support, ranking, termination
 
-    def _start_lines(
+    def _fit_constrained(
         self,
         *,
-        X: pd.DataFrame | npt.NDArray,
-        n_select: int
-    ) -> list[tuple[str, str]]:
-        settings = [f"step={self.step}", f"n_features_to_select={n_select}"]
-        if self.constraints is not None:
-            settings.append(f"strategy={self.strategy}")
-        if self.scoring is not None:
-            scoring = self.scoring if isinstance(self.scoring, str) else "callable"
-            settings.append(f"scoring={scoring}")
+        X: npt.NDArray | pd.DataFrame,
+        y: npt.NDArray,
+        feature_names: list[str],
+        step: int,
+        n_select: int,
+        monitor: Monitoring,
+        fit_params: dict[str, Any]
+    ) -> tuple[npt.NDArray, npt.NDArray, Termination]:
+        n_features = len(feature_names)
+        support = np.ones(n_features, dtype=bool)
+        ranking = np.ones(n_features, dtype=int)
+        termination = Termination.TARGET_REACHED
 
-        return [
-            ("Estimator", type(self.estimator).__name__),
-            ("Data", f"{X.shape[0]} samples, {X.shape[1]} features"),
-            ("Settings", ", ".join(settings)),
-        ]
+        while True:
+            features = np.flatnonzero(support)
+            n_remove = min(step, len(features) - n_select)
+            if n_remove < 1:
+                break
 
-    def _summarize(
-        self,
-        *,
-        run: _Run,
-        termination: str,
-        start: float,
-        cpu_start: float
-    ) -> None:
-        wall_time = time.perf_counter() - start
-        cpu_time = time.process_time() - cpu_start
-        n_blocked = 0 if self.solver_ is None else len(self.solver_.blocked)
+            estimator = clone(self.estimator)
+            X_features = select_columns(X, columns=features)
 
-        self.summary_ = {
-            "termination": termination,
-            "wall_time": wall_time,
-            "cpu_time": cpu_time,
-            "fit_time": run.fit_time,
-            "solve_time": run.solve_time,
-            "score_time": run.score_time,
-            "n_feasible_probes": run.n_feasible_probes,
-            "n_infeasible_probes": run.n_infeasible_probes,
-            "n_blocked": n_blocked,
-        }
+            start = time.perf_counter()
+            estimator.fit(X_features, y, **fit_params)
+            fit_time = time.perf_counter() - start
+            monitor.fit_time += fit_time
 
-        times = [f"fit {run.fit_time:.3f}"]
-        if self.solver_ is not None:
-            times.append(f"solve {run.solve_time:.3f}")
-        if run.scorer is not None:
-            times.append(f"score {run.score_time:.3f}")
+            importances = np.zeros(n_features)
+            importances[features] = self._get_feature_importances(
+                estimator=estimator, X=X_features
+            )
 
-        lines = [
-            ("Termination", termination),
-            (
-                "Selected",
-                f"{int(self.n_features_)} of {self.n_features_in_} features"
-            ),
-        ]
-        if self.solver_ is not None and self.strategy == "probing":
-            lines.append((
-                "Probes",
-                f"{run.n_feasible_probes} feasible, "
-                f"{run.n_infeasible_probes} infeasible, {n_blocked} blocked"
-            ))
-        lines.append((
-            "Time",
-            f"wall {wall_time:.3f}s ({', '.join(times)}), cpu {cpu_time:.3f}s"
-        ))
-        run.log.end(lines)
+            ordered = [
+                feature_names[i]
+                for i in features[
+                    np.argsort(importances[features], kind="stable")
+                ]
+            ]
 
-    def _get_step(self, n_features: int) -> int:
-        if 0.0 < self.step < 1.0:
-            return int(max(1, self.step * n_features))
-        return int(self.step)
+            # normalized importances plus a small offset, so that the solver
+            # keeps zero-importance features unless constraints force removal
+            weights = np.zeros(n_features)
+            top = importances[features].max()
+            weights[features] = (
+                importances[features] / top if top > 0 else 0.0
+            ) + self.importance_offset
+
+            start = time.perf_counter()
+            result = self.solver_.eliminate(
+                weights=weights,
+                ordered=ordered,
+                n_remove=n_remove
+            )
+            solve_time = time.perf_counter() - start
+            monitor.solve_time += solve_time
+            monitor.n_feasible_probes += result.n_feasible_probes
+            monitor.n_infeasible_probes += result.n_infeasible_probes
+
+            if result.status == "INFEASIBLE":
+                termination = Termination.INFEASIBLE
+                break
+            if result.status not in ("OPTIMAL", "FEASIBLE"):
+                raise RuntimeError(
+                    f"{type(self).__name__}: the solver returned "
+                    f"{result.status}."
+                )
+
+            solution = result.solution
+            candidates = result.candidates
+
+            # Monitoring block
+            retained, gap = importance_stats(
+                importances, kept=support & solution
+            )
+
+            score = np.nan
+            if monitor.scorer is not None:
+                start = time.perf_counter()
+                score = float(monitor.scorer(estimator, X_features, y))
+                monitor.score_time += time.perf_counter() - start
+
+            monitor.record(row={
+                "n_features": int(support.sum()),
+                "support": support.copy(),
+                "removed": int(support.sum() - (support & solution).sum()),
+                "n_feasible_probes": result.n_feasible_probes,
+                "n_infeasible_probes": result.n_infeasible_probes,
+                "retained_importance": retained,
+                "importance_gap": gap,
+                "fit_time": fit_time,
+                "solve_time": solve_time,
+                "score": score,
+            })
+            if monitor.stop:
+                termination = Termination.STOPPED
+                break
+
+            # Update fixed/excluded features, support and ranking
+            removed = np.flatnonzero(support & ~solution)
+            for index in removed:
+                if feature_names[index] in candidates:
+                    continue
+                self.solver_.build_exclude_constraint(
+                    feature=feature_names[index]
+                )
+
+            support = support & solution
+            ranking[~support] += 1
+
+        return support, ranking, termination
 
     def _set_selected_features(
         self,
@@ -707,13 +648,24 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         y: npt.NDArray,
         support: npt.NDArray,
         ranking: npt.NDArray,
-        run: _Run,
+        monitor: Monitoring,
         fit_params: dict[str, Any]
     ) -> None:
-        X_selected = _select_columns(X, columns=support)
+        X_selected = select_columns(X, columns=support)
         self.estimator_ = clone(self.estimator)
-        fit_time = run.fit(self.estimator_, X_selected, y, **fit_params)
-        run.record({
+
+        start = time.perf_counter()
+        self.estimator_.fit(X_selected, y, **fit_params)
+        fit_time = time.perf_counter() - start
+        monitor.fit_time += fit_time
+
+        score = np.nan
+        if monitor.scorer is not None:
+            start = time.perf_counter()
+            score = float(monitor.scorer(self.estimator_, X_selected, y))
+            monitor.score_time += time.perf_counter() - start
+
+        monitor.record(row={
             "n_features": int(support.sum()),
             "support": support.copy(),
             "removed": np.nan,
@@ -723,42 +675,70 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             "importance_gap": np.nan,
             "fit_time": fit_time,
             "solve_time": np.nan,
-            "score": run.score(self.estimator_, X_selected, y),
+            "score": score,
         })
-        self.history_ = run.history.to_dict()
+        self.history_ = monitor.history.to_dict()
         self.n_features_ = support.sum()
         self.support_ = support
         self.ranking_ = ranking
 
-    def _get_n_features_to_select(self, n_features: int) -> int:
-        n_select = self.n_features_to_select
-        if n_select is None:
-            return n_features // 2
-        if isinstance(n_select, numbers.Integral):
-            if not 0 < n_select <= n_features:
-                raise ValueError(
-                    f"n_features_to_select must be in (0, {n_features}], "
-                    f"got {n_select}."
-                )
-            return int(n_select)
-        if not 0.0 < n_select <= 1.0:
-            raise ValueError(
-                f"n_features_to_select as a float must be in (0, 1], got {n_select}."
-            )
-        return max(1, int(n_select * n_features))
+    def _summarize(
+        self,
+        *,
+        monitor: Monitoring,
+        termination: Termination,
+        cpu_start: float
+    ) -> None:
+        wall_time = time.perf_counter() - monitor.start
+        cpu_time = time.process_time() - cpu_start
+        n_blocked = 0 if self.solver_ is None else len(self.solver_.blocked)
 
-    def _get_importances(
+        self.summary_ = {
+            "termination": termination,
+            "wall_time": wall_time,
+            "cpu_time": cpu_time,
+            "fit_time": monitor.fit_time,
+            "solve_time": monitor.solve_time,
+            "score_time": monitor.score_time,
+            "n_feasible_probes": monitor.n_feasible_probes,
+            "n_infeasible_probes": monitor.n_infeasible_probes,
+            "n_blocked": n_blocked,
+        }
+
+        times = [f"fit {monitor.fit_time:.3f}"]
+        if self.solver_ is not None:
+            times.append(f"solve {monitor.solve_time:.3f}")
+        if monitor.scorer is not None:
+            times.append(f"score {monitor.score_time:.3f}")
+
+        lines = [
+            ("Termination", termination),
+            (
+                "Selected",
+                f"{int(self.n_features_)} of {self.n_features_in_} features"
+            ),
+        ]
+    
+        if self.solver_ is not None and self.strategy == "probing":
+            lines.append((
+                "Probes",
+                f"{monitor.n_feasible_probes} feasible, "
+                f"{monitor.n_infeasible_probes} infeasible, {n_blocked} blocked"
+            ))
+
+        lines.append((
+            "Time",
+            f"wall {wall_time:.3f}s ({', '.join(times)}), cpu {cpu_time:.3f}s"
+        ))
+
+        monitor.log.print_summary(lines=lines)
+
+    def _get_feature_importances(
         self,
         *,
         estimator: BaseEstimator,
         X: npt.NDArray
     ) -> npt.NDArray:
-        """Return one importance per feature.
-        
-        Notes
-        -----
-        Callables receive X in the fit input type and their output is made
-        absolute. Attribute getters are squared, as in RFE."""
         getter = self.importance_getter
         params = self.importance_params or {}
         if callable(getter):
@@ -779,8 +759,8 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
                 getter = "feature_importances_"
             else:
                 raise ValueError(
-                    f"{type(self).__name__}: importance_getter='auto' requires the "
-                    "estimator to expose coef_ or feature_importances_."
+                    f"{type(self).__name__}: importance_getter='auto' requires "
+                    "the estimator to expose coef_ or feature_importances_."
                 )
 
         importances = np.asarray(attrgetter(getter)(estimator)) ** 2
@@ -801,14 +781,14 @@ class CRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         )
 
         params = self.solver_params or {}
-        unknown = sorted(set(params) - set(self._solver_params_constraints))
+        unknown = sorted(set(params) - set(self.solver_params_constraints))
         if unknown:
             raise ValueError(
                 f"{type(self).__name__}: unknown solver_params {unknown}, valid "
-                f"keys are {sorted(self._solver_params_constraints)}."
+                f"keys are {sorted(self.solver_params_constraints)}."
             )
         validate_parameter_constraints(
-            self._solver_params_constraints,
+            self.solver_params_constraints,
             params,
             caller_name=f"{type(self).__name__} solver_params"
         )
