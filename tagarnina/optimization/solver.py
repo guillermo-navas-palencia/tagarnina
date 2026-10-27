@@ -1,3 +1,4 @@
+import time
 from typing import Callable
 
 import numpy as np
@@ -7,6 +8,7 @@ from ortools.sat.python import cp_model
 
 from .constraints import (
     AllOrNoneConstraint,
+    Constraint,
     Constraints,
     FixedConstraint,
     GroupConstraint,
@@ -55,13 +57,17 @@ class CPSolver:
     def n_constraints(self) -> int:
         return len(self.model.proto.constraints)
 
-    def feasibility_check(self) -> None:
+    def feasibility_check(self, *, X: pd.DataFrame) -> None:
         status = self.solver.solve(model=self.model)
 
         if status == cp_model.INFEASIBLE:
-            raise ValueError(
-                f"{type(self).__name__}: the constraints are infeasible."
-            )
+            conflict, minimal = self.explain_infeasibility(X=X)
+            message = f"{type(self).__name__}: the constraints are infeasible."
+            if conflict:
+                note = "" if minimal else " (not guaranteed minimal, time limit)"
+                lines = "\n".join(f"  - {constraint}" for constraint in conflict)
+                message += f" Conflicting constraints{note}:\n{lines}"
+            raise ValueError(message)
 
     def build_constraints(
         self,
@@ -77,32 +83,123 @@ class CPSolver:
         corr_cache = {}
 
         for constraint in self.constraints.constraints:
-            if isinstance(constraint, MaxCorrelationConstraint):
-                self.build_max_correlation_constraint(
-                    X=X, constraint=constraint, corr_cache=corr_cache
-                )
-            elif isinstance(constraint, GroupConstraint):
-                self.build_group_constraint(
-                    features=constraint.features, constraint=constraint
-                )
-            elif isinstance(constraint, MinMaxConstraint):
-                self.build_group_constraint(
-                    features=self.features, constraint=constraint
-                )
-            elif isinstance(constraint, OnlyEnforceIfConstraint):
-                self.build_only_enforce_if_constraint(constraint=constraint)
-            elif isinstance(constraint, OnlyExcludeIfConstraint):
-                self.build_only_exclude_if_constraint(constraint=constraint)
-            elif isinstance(constraint, FixedConstraint):
-                self.build_fixed_constraint(constraint=constraint)
-            elif isinstance(constraint, AllOrNoneConstraint):
-                self.build_all_or_none_constraint(constraint=constraint)
-            elif isinstance(constraint, KnapsackConstraint):
-                self.build_knapsack_constraint(constraint=constraint)
+            self.build_constraint(
+                X=X, constraint=constraint, corr_cache=corr_cache
+            )
 
-        self.feasibility_check()
+        self.feasibility_check(X=X)
 
         self._build_extra()
+
+    def build_constraint(
+        self,
+        *,
+        X: pd.DataFrame,
+        constraint: Constraint,
+        corr_cache: dict[str | Callable, pd.DataFrame]
+    ) -> None:
+        if isinstance(constraint, MaxCorrelationConstraint):
+            self.build_max_correlation_constraint(
+                X=X, constraint=constraint, corr_cache=corr_cache
+            )
+        elif isinstance(constraint, GroupConstraint):
+            self.build_group_constraint(
+                features=constraint.features, constraint=constraint
+            )
+        elif isinstance(constraint, MinMaxConstraint):
+            self.build_group_constraint(
+                features=self.features, constraint=constraint
+            )
+        elif isinstance(constraint, OnlyEnforceIfConstraint):
+            self.build_only_enforce_if_constraint(constraint=constraint)
+        elif isinstance(constraint, OnlyExcludeIfConstraint):
+            self.build_only_exclude_if_constraint(constraint=constraint)
+        elif isinstance(constraint, FixedConstraint):
+            self.build_fixed_constraint(constraint=constraint)
+        elif isinstance(constraint, AllOrNoneConstraint):
+            self.build_all_or_none_constraint(constraint=constraint)
+        elif isinstance(constraint, KnapsackConstraint):
+            self.build_knapsack_constraint(constraint=constraint)
+
+    def explain_infeasibility(
+        self,
+        *,
+        X: pd.DataFrame
+    ) -> tuple[list[Constraint], bool]:
+        """Constraints that cannot hold together, and whether the set is minimal.
+
+        The constraints are rebuilt in a separate model, each enforced by a
+        literal that is assumed. CP-SAT returns a subset of the assumptions
+        that is sufficient for infeasibility, which is then shrunk by dropping
+        one constraint at a time within the solver time limit.
+        """
+        model, x = self.model, self.x
+        self.model = cp_model.CpModel()
+        self.x = {
+            feature: self.model.new_bool_var(name=feature)
+            for feature in self.features
+        }
+
+        try:
+            corr_cache = {}
+            literals = []
+
+            for constraint in self.constraints.constraints:
+                literal = self.model.new_bool_var(name="")
+                first = len(self.model.proto.constraints)
+                self.build_constraint(
+                    X=X, constraint=constraint, corr_cache=corr_cache
+                )
+                # the proto constraints added by this constraint
+                for i in range(first, len(self.model.proto.constraints)):
+                    self.model.proto.constraints[i].enforcement_literal.append(
+                        literal.index
+                    )
+                literals.append(literal)
+
+            position = {literal.index: i for i, literal in enumerate(literals)}
+            status = self.solve_assuming(
+                literals=literals, subset=range(len(literals))
+            )
+            if status != cp_model.INFEASIBLE:
+                return [], False
+
+            core = sorted(
+                position[i]
+                for i in self.solver.sufficient_assumptions_for_infeasibility()
+            )
+
+            minimal = True
+            deadline = (
+                time.perf_counter() + self.solver.parameters.max_time_in_seconds
+            )
+            for i in list(core):
+                if time.perf_counter() > deadline:
+                    minimal = False
+                    break
+
+                trial = [j for j in core if j != i]
+                status = self.solve_assuming(literals=literals, subset=trial)
+                if status == cp_model.INFEASIBLE:
+                    core = trial
+                elif status == cp_model.UNKNOWN:
+                    minimal = False
+
+            conflict = [self.constraints.constraints[i] for i in core]
+            return conflict, minimal
+        finally:
+            self.model, self.x = model, x
+
+    def solve_assuming(
+        self,
+        *,
+        literals: list[cp_model.IntVar],
+        subset: list[int]
+    ) -> int:
+        self.model.clear_assumptions()
+        for i in subset:
+            self.model.add_assumption(literals[i])
+        return self.solver.solve(model=self.model)
 
     def _build_extra(self) -> None:
         """Hook to add algorithm specific variables once the model is built."""

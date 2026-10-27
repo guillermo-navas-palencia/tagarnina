@@ -9,7 +9,14 @@ from typing import Callable
 @dataclass
 class Constraint:
     def __str__(self) -> str:
-        return repr(self)
+        return type(self).__name__
+
+
+def format_features(features: list[str], *, sep: str) -> str:
+    if len(features) <= 6:
+        return sep.join(features)
+    return f"{features[0]}{sep}...{sep}{features[-1]} ({len(features)} features)"
+
 
 
 @dataclass(kw_only=True)
@@ -57,6 +64,12 @@ class MaxCorrelationConstraint(Constraint):
                     "when absolute is False."
                 )
 
+    def __str__(self) -> str:
+        scope = "all features" if self.features is None else f"{len(self.features)} features"
+        kind = "|corr|" if self.absolute else "corr"
+        method = self.method if isinstance(self.method, str) else "custom"
+        return f"pairwise {kind} < {self.max_corr:g} ({method}, {scope})"
+
 
 def _validate_bounds(constraint: GroupConstraint | MinMaxConstraint) -> None:
     name = type(constraint).__name__
@@ -98,10 +111,19 @@ class GroupConstraint(Constraint):
         if self.max_features > n_features:
             self.max_features = n_features
 
+    def __str__(self) -> str:
+        return (
+            f"{self.min_features} <= {format_features(self.features, sep=' + ')} "
+            f"<= {self.max_features}"
+        )
+
 
 @dataclass(kw_only=True)
 class AtMostKConstraint(GroupConstraint):
     min_features: int = field(default=0, init=False)
+
+    def __str__(self) -> str:
+        return f"{format_features(self.features, sep=' + ')} <= {self.max_features}"
 
 
 @dataclass(kw_only=True)
@@ -112,6 +134,9 @@ class AtLeastKConstraint(GroupConstraint):
         self.max_features = len(self.features)
         super().__post_init__()
 
+    def __str__(self) -> str:
+        return f"{format_features(self.features, sep=' + ')} >= {self.min_features}"
+
 
 @dataclass(kw_only=True)
 class MinMaxConstraint(Constraint):
@@ -120,6 +145,11 @@ class MinMaxConstraint(Constraint):
 
     def __post_init__(self):
         _validate_bounds(self)
+
+    def __str__(self) -> str:
+        return (
+            f"{self.min_features} <= sum of all features <= {self.max_features}"
+        )
 
 
 @dataclass(kw_only=True)
@@ -133,6 +163,9 @@ class OnlyEnforceIfConstraint(Constraint):
                 f"{type(self).__name__}: feature1 and feature2 must be different."
             )
 
+    def __str__(self) -> str:
+        return f"{self.feature1} => {self.feature2}"
+
 
 @dataclass(kw_only=True)
 class OnlyExcludeIfConstraint(Constraint):
@@ -145,10 +178,16 @@ class OnlyExcludeIfConstraint(Constraint):
                 f"{type(self).__name__}: feature1 and feature2 must be different."
             )
 
+    def __str__(self) -> str:
+        return f"{self.feature1} => not {self.feature2}"
+
 
 @dataclass(kw_only=True)
 class FixedConstraint(Constraint):
     feature: str
+
+    def __str__(self) -> str:
+        return f"{self.feature} fixed"
 
 
 @dataclass(kw_only=True)
@@ -160,6 +199,9 @@ class AllOrNoneConstraint(Constraint):
             raise ValueError(
                 f"{type(self).__name__}: features must contain at least one name."
             )
+
+    def __str__(self) -> str:
+        return f"all or none of {format_features(self.features, sep=', ')}"
 
 
 @dataclass(kw_only=True)
@@ -187,6 +229,12 @@ class KnapsackConstraint(Constraint):
 
         if not (math.isfinite(self.budget) and self.budget > 0):
             raise ValueError(f"{name}: budget must be finite and positive.")
+
+    def __str__(self) -> str:
+        return (
+            f"weighted sum of {format_features(self.features, sep=', ')} "
+            f"<= {self.budget:g}"
+        )
 
 
 @dataclass(kw_only=True)
