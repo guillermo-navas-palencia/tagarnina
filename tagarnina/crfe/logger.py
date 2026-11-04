@@ -63,7 +63,7 @@ def describe_settings(
     return lines
 
 
-def describe_solver(*, solver: "CPSolver", build_time: float) -> list[tuple[str, str]]:
+def describe_solver(*, solver: "CPSolver") -> list[tuple[str, str]]:
     params = solver.solver.parameters
     return [
         (
@@ -72,6 +72,11 @@ def describe_solver(*, solver: "CPSolver", build_time: float) -> list[tuple[str,
             f"time_limit={params.max_time_in_seconds:g}s, "
             f"seed={params.random_seed}"
         ),
+    ]
+
+
+def describe_model(*, solver: "CPSolver", build_time: float) -> list[tuple[str, str]]:
+    return [
         (
             "Model",
             f"{solver.n_variables} variables, {solver.n_constraints} constraints, "
@@ -149,26 +154,81 @@ class CRFELogger:
         for label, value in lines:
             echo(f"{label:<{LABEL_WIDTH}}: {value}")
 
-    def print_header(
-        self,
-        *,
-        lines: Sequence[tuple[str, str]],
-        details: Sequence[tuple[str, str]] = ()
-    ) -> None:
+    def print_banner(self) -> None:
+        if self.verbose:
+            for text in banner_lines(subtitle=ALGORITHM_NAME, width=self.width):
+                echo(text)
+
+    def print_table_header(self, *, title: str | None = None) -> None:
         if not self.verbose:
             return
-
-        for text in banner_lines(subtitle=ALGORITHM_NAME, width=self.width):
-            echo(text)
-
-        self.print_lines(lines=lines)
-        self.print_lines(lines=details, min_verbose=2)
         echo()
+        if title is not None:
+            echo(title)
         self.print_rule(char="-")
         echo(
             "  ".join(f"{header:>{width}}" for _, header, width, _ in self.columns)
         )
         self.print_rule(char="-")
+
+    def print_header(
+        self,
+        *,
+        lines: Sequence[tuple[str, str]],
+        details: Sequence[tuple[str, str]] = (),
+        title: str | None = None
+    ) -> None:
+        self.print_banner()
+        self.print_lines(lines=lines)
+        self.print_lines(lines=details, min_verbose=2)
+        self.print_table_header(title=title)
+
+    def print_fold_start(
+        self,
+        *,
+        index: int,
+        n_folds: int,
+        details: Sequence[tuple[str, str]] = ()
+    ) -> None:
+        if not self.verbose:
+            return
+        echo()
+        echo(f"Fold {index}/{n_folds}")
+        self.print_lines(lines=details, min_verbose=2)
+        self.print_table_header()
+
+    def print_fold(
+        self,
+        *,
+        index: int,
+        n_folds: int,
+        n_train: int,
+        n_test: int,
+        best: int,
+        score: float,
+        elapsed: float
+    ) -> None:
+        if self.verbose:
+            echo(
+                f"Fold {index}/{n_folds}: train {n_train}, test {n_test}, "
+                f"best {best} features (score {score:.4e}), elapsed {elapsed:.3f}s"
+            )
+
+    def print_cv_scores(
+        self,
+        *,
+        sizes: Sequence[int],
+        mean_scores: Sequence[float],
+        std_scores: Sequence[float],
+        selected: int
+    ) -> None:
+        if not self.verbose:
+            return
+        echo()
+        echo(f"{'n_features':>11}  {'mean score':>11}  {'std score':>11}")
+        for size, mean, std in zip(sizes, mean_scores, std_scores):
+            marker = "  <- selected" if size == selected else ""
+            echo(f"{size:>11}  {mean:>11.4e}  {std:>11.4e}{marker}")
 
     def print_iteration(self, *, row: dict[str, Any]) -> None:
         if self.verbose:

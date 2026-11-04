@@ -1,45 +1,19 @@
-import numbers
 import time
 from numbers import Integral
 from typing import Any, Callable, Hashable, Self
 
 import numpy.typing as npt
 import pandas as pd
-from scipy.sparse import issparse
 
 from sklearn.base import BaseEstimator
 from sklearn.metrics import check_scoring
 from sklearn.utils._param_validation import Interval, RealNotInt
-from sklearn.utils.validation import validate_data
 
-from ..optimization.constraints import AtLeastKConstraint, Constraints
-from .base import BaseCRFE, get_step
+from ..optimization.constraints import Constraints
+from .base import BaseCRFE, column_scorer, resolve_n_features
 from .history import History
-from .logger import CRFELogger, describe_input, describe_settings, describe_solver
+from .logger import CRFELogger
 from .monitoring import Monitoring
-from .solver import CRFESolver
-
-
-def resolve_n_features(
-    *,
-    n_features_to_select: int | float | None,
-    n_features: int
-) -> int:
-    if n_features_to_select is None:
-        return n_features // 2
-    if isinstance(n_features_to_select, numbers.Integral):
-        if not 0 < n_features_to_select <= n_features:
-            raise ValueError(
-                f"n_features_to_select must be in (0, {n_features}], "
-                f"got {n_features_to_select}."
-            )
-        return int(n_features_to_select)
-    if not 0.0 < n_features_to_select <= 1.0:
-        raise ValueError(
-            "n_features_to_select as a float must be in (0, 1], "
-            f"got {n_features_to_select}."
-        )
-    return max(1, int(n_features_to_select * n_features))
 
 
 class CRFE(BaseCRFE):
@@ -163,6 +137,7 @@ class CRFE(BaseCRFE):
             Interval(RealNotInt, 0, 1, closed="right"),
         ],
         "callback": [callable, None],
+        "scoring": [str, callable, None],
     }
 
     def __init__(
@@ -230,23 +205,20 @@ class CRFE(BaseCRFE):
         start = time.perf_counter()
         cpu_start = time.process_time()
 
-        feature_names = None
-        non_numeric_features = frozenset()
-
-        if isinstance(X, pd.DataFrame):
-            feature_names = X.columns.tolist()
-            if not all(isinstance(name, str) for name in feature_names):
-                raise TypeError("DataFrame column names must all be strings.")
-
-            non_numeric_features = frozenset(
-                name for name, dtype in X.dtypes.items()
-                if not pd.api.types.is_numeric_dtype(dtype)
-            )
+        X_rfe, X, y, feature_names, non_numeric_features = self._check_input(
+            X=X,
+            y=y
+        )
+        n_features = X.shape[1]
 
         scorer = (
             None
             if self.scoring is None
-            else check_scoring(self.estimator, scoring=self.scoring)
+            else column_scorer(
+                check_scoring(self.estimator, scoring=self.scoring),
+                X=X_rfe,
+                y=y
+            )
         )
 
         monitor = Monitoring(
@@ -262,121 +234,35 @@ class CRFE(BaseCRFE):
             start=start
         )
 
-        X_input = X
-        X, y = validate_data(
-            self,
-            X=X,
-            y=y,
-            reset=True,
-            accept_sparse="csc",
-            dtype=None,
-            ensure_min_features=2,
-            ensure_all_finite=False,
-            multi_output=True,
-        )
-
-        X_rfe = X_input if isinstance(X_input, pd.DataFrame) else X
-        n_features = X.shape[1]
-        step = get_step(step=self.step, n_features=n_features)
-
-        if self.constraints is None:
-            # Classical RFE scikit-learn implementation
-            self.solver_ = None
+        if self.constraints is not None and self.n_features_to_select is None:
+            n_select = 1
+        else:
             n_select = resolve_n_features(
                 n_features_to_select=self.n_features_to_select,
                 n_features=n_features
             )
-    
-            monitor.log.print_header(
-                lines=[
-                    *describe_input(estimator=self.estimator, X=X_rfe),
-                    *describe_settings(
-                        step=self.step,
-                        n_select=n_select,
-                        constraints=None,
-                        strategy=self.strategy,
-                        scoring=self.scoring
-                    )
-                ]
-            )
 
-            support, ranking, termination = self._fit(
-                X=X_rfe,
-                y=y,
-                step=step,
-                n_select=n_select,
-                monitor=monitor,
-                fit_params=fit_params
-            )
-        else:
-            if feature_names is None:
-                feature_names = [f"x{i}" for i in range(self.n_features_in_)]
+        build_time = self._setup(
+            X=X,
+            feature_names=feature_names,
+            non_numeric_features=non_numeric_features,
+            n_select=n_select
+        )
+        self._print_header(
+            monitor=monitor,
+            X=X_rfe,
+            n_select=n_select,
+            build_time=build_time
+        )
 
-            self.constraints.validate(
-                features=feature_names,
-                non_numeric_features=non_numeric_features
-            )
-
-            if self.n_features_to_select is None:
-                n_select = 1
-            else:
-                n_select = resolve_n_features(
-                    n_features_to_select=self.n_features_to_select,
-                    n_features=n_features
-                )
-
-            # Translate the n_select features into an at_least_k constraint
-            solver_constraints = Constraints(
-                constraints=[
-                    *self.constraints.constraints,
-                    AtLeastKConstraint(
-                        features=feature_names,
-                        min_features=n_select
-                    ),
-                ]
-            )
-
-            self.solver_ = CRFESolver(
-                features=feature_names,
-                constraints=solver_constraints,
-                strategy=self.strategy,
-                **(self.solver_params or {})
-            )
-
-            X_dense = X.toarray() if issparse(X) else X
-            X_df = pd.DataFrame(
-                data=X_dense, columns=feature_names
-            ).infer_objects()
-
-            build_start = time.perf_counter()
-            self.solver_.build_constraints(X=X_df)
-            build_time = time.perf_counter() - build_start
-
-            monitor.log.print_header(
-                lines=[
-                    *describe_input(estimator=self.estimator, X=X_rfe),
-                    *describe_settings(
-                        step=self.step,
-                        n_select=n_select,
-                        constraints=self.constraints,
-                        strategy=self.strategy,
-                        scoring=self.scoring
-                    ),
-                ],
-                details=describe_solver(
-                    solver=self.solver_, build_time=build_time
-                )
-            )
-
-            support, ranking, termination = self._fit_constrained(
-                X=X_rfe,
-                y=y,
-                feature_names=feature_names,
-                step=step,
-                n_select=n_select,
-                monitor=monitor,
-                fit_params=fit_params
-            )
+        support, ranking, termination = self._run(
+            X=X_rfe,
+            y=y,
+            feature_names=feature_names,
+            n_select=n_select,
+            monitor=monitor,
+            fit_params=fit_params
+        )
 
         self._set_selected_features(
             X=X_rfe,

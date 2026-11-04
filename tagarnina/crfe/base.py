@@ -1,13 +1,15 @@
 """Shared base of the constrained recursive feature elimination selectors."""
 
+import numbers
 import time
 from numbers import Integral, Real
 from operator import attrgetter
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+from scipy.sparse import issparse
 from sklearn.base import BaseEstimator, MetaEstimatorMixin, clone
 from sklearn.feature_selection import SelectorMixin
 from sklearn.utils._param_validation import (
@@ -17,10 +19,17 @@ from sklearn.utils._param_validation import (
     StrOptions,
     validate_parameter_constraints
 )
-from sklearn.utils.validation import check_is_fitted
+from sklearn.utils.validation import check_is_fitted, validate_data
 
-from ..optimization.constraints import Constraints
+from ..optimization.constraints import AtLeastKConstraint, Constraints
+from .logger import (
+    describe_input,
+    describe_model,
+    describe_settings,
+    describe_solver
+)
 from .monitoring import Monitoring
+from .solver import CRFESolver
 from .termination import Termination
 
 
@@ -32,6 +41,41 @@ def select_columns(
     if isinstance(X, pd.DataFrame):
         return X.iloc[:, columns]
     return X[:, columns]
+
+
+def column_scorer(
+    scorer: Callable,
+    *,
+    X: pd.DataFrame | npt.NDArray,
+    y: npt.NDArray
+) -> Callable[[BaseEstimator, npt.NDArray], float]:
+    """Score an estimator on the columns given by index, on the rows of X."""
+    def score(estimator: BaseEstimator, features: npt.NDArray) -> float:
+        return float(scorer(estimator, select_columns(X, columns=features), y))
+
+    return score
+
+
+def resolve_n_features(
+    *,
+    n_features_to_select: int | float | None,
+    n_features: int
+) -> int:
+    if n_features_to_select is None:
+        return n_features // 2
+    if isinstance(n_features_to_select, numbers.Integral):
+        if not 0 < n_features_to_select <= n_features:
+            raise ValueError(
+                f"n_features_to_select must be in (0, {n_features}], "
+                f"got {n_features_to_select}."
+            )
+        return int(n_features_to_select)
+    if not 0.0 < n_features_to_select <= 1.0:
+        raise ValueError(
+            "n_features_to_select as a float must be in (0, 1], "
+            f"got {n_features_to_select}."
+        )
+    return max(1, int(n_features_to_select * n_features))
 
 
 def importance_stats(
@@ -72,7 +116,6 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         "constraints": [Constraints, None],
         "strategy": [StrOptions({"greedy", "probing"})],
         "solver_params": [dict, None],
-        "scoring": [str, callable, None],
         "importance_getter": [str, callable],
         "importance_params": [dict, None],
         "importance_offset": [Interval(Real, 0, 0.1, closed="both")],
@@ -124,7 +167,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             score = np.nan
             if monitor.scorer is not None:
                 start = time.perf_counter()
-                score = float(monitor.scorer(estimator, X_features, y))
+                score = monitor.scorer(estimator, features)
                 monitor.score_time += time.perf_counter() - start
 
             monitor.record(row={
@@ -231,7 +274,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             score = np.nan
             if monitor.scorer is not None:
                 start = time.perf_counter()
-                score = float(monitor.scorer(estimator, X_features, y))
+                score = monitor.scorer(estimator, features)
                 monitor.score_time += time.perf_counter() - start
 
             monitor.record(row={
@@ -264,28 +307,29 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
 
         return support, ranking, termination
 
-    def _set_selected_features(
+    def _record_selected(
         self,
         *,
         X: npt.NDArray | pd.DataFrame,
         y: npt.NDArray,
         support: npt.NDArray,
-        ranking: npt.NDArray,
         monitor: Monitoring,
         fit_params: dict[str, Any]
-    ) -> None:
-        X_selected = select_columns(X, columns=support)
-        self.estimator_ = clone(self.estimator)
+    ) -> BaseEstimator:
+        """Fit a clone on the selected features and record the final row."""
+        features = np.flatnonzero(support)
+        X_selected = select_columns(X, columns=features)
+        estimator = clone(self.estimator)
 
         start = time.perf_counter()
-        self.estimator_.fit(X_selected, y, **fit_params)
+        estimator.fit(X_selected, y, **fit_params)
         fit_time = time.perf_counter() - start
         monitor.fit_time += fit_time
 
         score = np.nan
         if monitor.scorer is not None:
             start = time.perf_counter()
-            score = float(monitor.scorer(self.estimator_, X_selected, y))
+            score = monitor.scorer(estimator, features)
             monitor.score_time += time.perf_counter() - start
 
         monitor.record(row={
@@ -300,10 +344,194 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             "solve_time": np.nan,
             "score": score,
         })
+        return estimator
+
+    def _set_selected_features(
+        self,
+        *,
+        X: npt.NDArray | pd.DataFrame,
+        y: npt.NDArray,
+        support: npt.NDArray,
+        ranking: npt.NDArray,
+        monitor: Monitoring,
+        fit_params: dict[str, Any]
+    ) -> None:
+        self.estimator_ = self._record_selected(
+            X=X,
+            y=y,
+            support=support,
+            monitor=monitor,
+            fit_params=fit_params
+        )
         self.history_ = monitor.history.to_dict()
         self.n_features_ = support.sum()
         self.support_ = support
         self.ranking_ = ranking
+
+    def _check_input(
+        self,
+        *,
+        X: pd.DataFrame | npt.NDArray,
+        y: pd.Series | npt.NDArray
+    ) -> tuple[pd.DataFrame | npt.NDArray, npt.NDArray, npt.NDArray, list[str], frozenset]:
+        """Validate the data and return the input used for display and feature
+        names, the validated X and y, and the non-numeric DataFrame columns."""
+        feature_names = None
+        non_numeric_features = frozenset()
+
+        if isinstance(X, pd.DataFrame):
+            feature_names = X.columns.tolist()
+            if not all(isinstance(name, str) for name in feature_names):
+                raise TypeError("DataFrame column names must all be strings.")
+
+            non_numeric_features = frozenset(
+                name for name, dtype in X.dtypes.items()
+                if not pd.api.types.is_numeric_dtype(dtype)
+            )
+
+        X_input = X
+        X, y = validate_data(
+            self,
+            X=X,
+            y=y,
+            reset=True,
+            accept_sparse="csc",
+            dtype=None,
+            ensure_min_features=2,
+            ensure_all_finite=False,
+            multi_output=True,
+        )
+
+        X_rfe = X_input if isinstance(X_input, pd.DataFrame) else X
+        if feature_names is None:
+            feature_names = [f"x{i}" for i in range(self.n_features_in_)]
+
+        return X_rfe, X, y, feature_names, non_numeric_features
+
+    def _setup(
+        self,
+        *,
+        X: npt.NDArray,
+        feature_names: list[str],
+        non_numeric_features: frozenset,
+        n_select: int
+    ) -> float:
+        """Set `solver_` for one run (None when unconstrained) and return the
+        time spent building the constraints."""
+        if self.constraints is None:
+            self.solver_ = None
+            return 0.0
+
+        self.constraints.validate(
+            features=feature_names,
+            non_numeric_features=non_numeric_features
+        )
+
+        # Translate the n_select features into an at_least_k constraint
+        solver_constraints = Constraints(
+            constraints=[
+                *self.constraints.constraints,
+                AtLeastKConstraint(
+                    features=feature_names,
+                    min_features=n_select
+                ),
+            ]
+        )
+
+        self.solver_ = CRFESolver(
+            features=feature_names,
+            constraints=solver_constraints,
+            strategy=self.strategy,
+            **(self.solver_params or {})
+        )
+
+        X_dense = X.toarray() if issparse(X) else X
+        X_df = pd.DataFrame(
+            data=X_dense, columns=feature_names
+        ).infer_objects()
+
+        build_start = time.perf_counter()
+        self.solver_.build_constraints(X=X_df)
+        return time.perf_counter() - build_start
+
+    def _run(
+        self,
+        *,
+        X: pd.DataFrame | npt.NDArray,
+        y: npt.NDArray,
+        feature_names: list[str],
+        n_select: int,
+        monitor: Monitoring,
+        fit_params: dict[str, Any]
+    ) -> tuple[npt.NDArray, npt.NDArray, Termination]:
+        """Eliminate features down to n_select, after `_setup`."""
+        step = get_step(step=self.step, n_features=X.shape[1])
+
+        if self.constraints is None:
+            return self._fit(
+                X=X,
+                y=y,
+                step=step,
+                n_select=n_select,
+                monitor=monitor,
+                fit_params=fit_params
+            )
+        return self._fit_constrained(
+            X=X,
+            y=y,
+            feature_names=feature_names,
+            step=step,
+            n_select=n_select,
+            monitor=monitor,
+            fit_params=fit_params
+        )
+
+    def _describe_input(
+        self,
+        *,
+        X: pd.DataFrame | npt.NDArray,
+        n_select: int
+    ) -> list[tuple[str, str]]:
+        return [
+            *describe_input(estimator=self.estimator, X=X),
+            *describe_settings(
+                step=self.step,
+                n_select=n_select,
+                constraints=self.constraints,
+                strategy=self.strategy,
+                scoring=self.scoring
+            ),
+        ]
+
+    def _probe_solver(self) -> CRFESolver:
+        """Solver with the run settings and no model, to describe it before a fit."""
+        return CRFESolver(
+            features=[],
+            constraints=Constraints(constraints=[]),
+            strategy=self.strategy,
+            **(self.solver_params or {})
+        )
+
+    def _print_header(
+        self,
+        *,
+        monitor: Monitoring,
+        X: pd.DataFrame | npt.NDArray,
+        n_select: int,
+        build_time: float,
+        title: str | None = None
+    ) -> None:
+        details = []
+        if self.solver_ is not None:
+            details = [
+                *describe_solver(solver=self.solver_),
+                *describe_model(solver=self.solver_, build_time=build_time),
+            ]
+        monitor.log.print_header(
+            lines=self._describe_input(X=X, n_select=n_select),
+            details=details,
+            title=title
+        )
 
     def _summarize(
         self,
