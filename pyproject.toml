@@ -4,6 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tagarnina"
+dynamic = ["version"]
 description = "Constrained Feature Selection"
 readme = "README.md"
 license = "Apache-2.0"
@@ -21,6 +22,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
+
+[tool.setuptools.dynamic]
+version = { attr = "tagarnina.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["tagarnina*"]
