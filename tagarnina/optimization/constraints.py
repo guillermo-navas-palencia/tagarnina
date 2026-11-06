@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -18,7 +17,6 @@ def format_features(features: list[str], *, sep: str) -> str:
     return f"{features[0]}{sep}...{sep}{features[-1]} ({len(features)} features)"
 
 
-
 @dataclass(kw_only=True)
 class MaxCorrelationConstraint(Constraint):
     max_corr: float
@@ -30,17 +28,14 @@ class MaxCorrelationConstraint(Constraint):
         name = type(self).__name__
 
         if self.features is not None and len(self.features) <= 1:
-            raise ValueError(
-                f"{name}: features must contain at least two names."
-            )
+            raise ValueError(f"{name}: features must contain at least two names.")
 
         if self.features is not None and len(set(self.features)) != len(self.features):
             raise ValueError(f"{name}: features must be unique.")
 
         if not isinstance(self.absolute, bool):
             raise TypeError(
-                f"{name}: absolute must be a bool, "
-                f"got {type(self.absolute).__name__}."
+                f"{name}: absolute must be a bool, got {type(self.absolute).__name__}."
             )
 
         if self.method not in ("pearson", "spearman", "kendall") and not callable(
@@ -54,18 +49,20 @@ class MaxCorrelationConstraint(Constraint):
         if self.absolute:
             if not 0.0 <= self.max_corr <= 1.0:
                 raise ValueError(
-                    f"{name}: max_corr must be between 0 and 1 "
-                    "when absolute is True."
+                    f"{name}: max_corr must be between 0 and 1 when absolute is True."
                 )
         else:
             if not -1.0 <= self.max_corr <= 1.0:
                 raise ValueError(
-                    f"{name}: max_corr must be between -1 and 1 "
-                    "when absolute is False."
+                    f"{name}: max_corr must be between -1 and 1 when absolute is False."
                 )
 
     def __str__(self) -> str:
-        scope = "all features" if self.features is None else f"{len(self.features)} features"
+        if self.features is None:
+            scope = "all features"
+        else:
+            scope = f"{len(self.features)} features"
+
         kind = "|corr|" if self.absolute else "corr"
         method = self.method if isinstance(self.method, str) else "custom"
         return f"pairwise {kind} < {self.max_corr:g} ({method}, {scope})"
@@ -74,9 +71,7 @@ class MaxCorrelationConstraint(Constraint):
 def _validate_bounds(constraint: GroupConstraint | MinMaxConstraint) -> None:
     name = type(constraint).__name__
     if constraint.min_features < 0 or constraint.max_features < 0:
-        raise ValueError(
-            f"{name}: min_features and max_features must be non-negative."
-        )
+        raise ValueError(f"{name}: min_features and max_features must be non-negative.")
 
     if constraint.min_features > constraint.max_features:
         raise ValueError(
@@ -147,9 +142,7 @@ class MinMaxConstraint(Constraint):
         _validate_bounds(self)
 
     def __str__(self) -> str:
-        return (
-            f"{self.min_features} <= sum of all features <= {self.max_features}"
-        )
+        return f"{self.min_features} <= sum of all features <= {self.max_features}"
 
 
 @dataclass(kw_only=True)
@@ -276,7 +269,9 @@ class Constraints:
                 constraint_features = (
                     features if constraint.features is None else constraint.features
                 )
-            elif isinstance(constraint, (OnlyEnforceIfConstraint, OnlyExcludeIfConstraint)):
+            elif isinstance(
+                constraint, (OnlyEnforceIfConstraint, OnlyExcludeIfConstraint)
+            ):
                 constraint_features = [constraint.feature1, constraint.feature2]
             elif isinstance(constraint, FixedConstraint):
                 constraint_features = [constraint.feature]

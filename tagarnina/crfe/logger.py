@@ -70,7 +70,7 @@ def describe_solver(*, solver: "CPSolver") -> list[tuple[str, str]]:
             "Solver",
             f"CP-SAT {ortools.__version__}, workers={params.num_workers}, "
             f"time_limit={params.max_time_in_seconds:g}s, "
-            f"seed={params.random_seed}"
+            f"seed={params.random_seed}",
         ),
     ]
 
@@ -80,7 +80,7 @@ def describe_model(*, solver: "CPSolver", build_time: float) -> list[tuple[str, 
         (
             "Model",
             f"{solver.n_variables} variables, {solver.n_constraints} constraints, "
-            f"built in {build_time:.3f}s"
+            f"built in {build_time:.3f}s",
         ),
     ]
 
@@ -118,14 +118,7 @@ class CRFELogger:
     and 2 also prints the solver and model details.
     """
 
-    def __init__(
-        self,
-        *,
-        verbose: int,
-        scored: bool,
-        solver: bool,
-        probing: bool
-    ):
+    def __init__(self, *, verbose: int, scored: bool, solver: bool, probing: bool):
         self.verbose = verbose
         self.columns = [
             column
@@ -144,10 +137,7 @@ class CRFELogger:
             echo(char * self.width)
 
     def print_lines(
-        self,
-        *,
-        lines: Sequence[tuple[str, str]],
-        min_verbose: int = 1
+        self, *, lines: Sequence[tuple[str, str]], min_verbose: int = 1
     ) -> None:
         if self.verbose < min_verbose:
             return
@@ -166,9 +156,7 @@ class CRFELogger:
         if title is not None:
             echo(title)
         self.print_rule(char="-")
-        echo(
-            "  ".join(f"{header:>{width}}" for _, header, width, _ in self.columns)
-        )
+        echo("  ".join(f"{header:>{width}}" for _, header, width, _ in self.columns))
         self.print_rule(char="-")
 
     def print_header(
@@ -176,7 +164,7 @@ class CRFELogger:
         *,
         lines: Sequence[tuple[str, str]],
         details: Sequence[tuple[str, str]] = (),
-        title: str | None = None
+        title: str | None = None,
     ) -> None:
         self.print_banner()
         self.print_lines(lines=lines)
@@ -184,11 +172,7 @@ class CRFELogger:
         self.print_table_header(title=title)
 
     def print_fold_start(
-        self,
-        *,
-        index: int,
-        n_folds: int,
-        details: Sequence[tuple[str, str]] = ()
+        self, *, index: int, n_folds: int, details: Sequence[tuple[str, str]] = ()
     ) -> None:
         if not self.verbose:
             return
@@ -206,7 +190,7 @@ class CRFELogger:
         n_test: int,
         best: int,
         score: float,
-        elapsed: float
+        elapsed: float,
     ) -> None:
         if self.verbose:
             echo(
@@ -220,7 +204,7 @@ class CRFELogger:
         sizes: Sequence[int],
         mean_scores: Sequence[float],
         std_scores: Sequence[float],
-        selected: int
+        selected: int,
     ) -> None:
         if not self.verbose:
             return

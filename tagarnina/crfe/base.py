@@ -17,26 +17,19 @@ from sklearn.utils._param_validation import (
     Interval,
     RealNotInt,
     StrOptions,
-    validate_parameter_constraints
+    validate_parameter_constraints,
 )
 from sklearn.utils.validation import check_is_fitted, validate_data
 
 from ..optimization.constraints import AtLeastKConstraint, Constraints
-from .logger import (
-    describe_input,
-    describe_model,
-    describe_settings,
-    describe_solver
-)
+from .logger import describe_input, describe_model, describe_settings, describe_solver
 from .monitoring import Monitoring
 from .solver import CRFESolver
 from .termination import Termination
 
 
 def select_columns(
-    X: pd.DataFrame | npt.NDArray,
-    *,
-    columns: npt.NDArray
+    X: pd.DataFrame | npt.NDArray, *, columns: npt.NDArray
 ) -> pd.DataFrame | npt.NDArray:
     if isinstance(X, pd.DataFrame):
         return X.iloc[:, columns]
@@ -44,12 +37,10 @@ def select_columns(
 
 
 def column_scorer(
-    scorer: Callable,
-    *,
-    X: pd.DataFrame | npt.NDArray,
-    y: npt.NDArray
+    scorer: Callable, *, X: pd.DataFrame | npt.NDArray, y: npt.NDArray
 ) -> Callable[[BaseEstimator, npt.NDArray], float]:
     """Score an estimator on the columns given by index, on the rows of X."""
+
     def score(estimator: BaseEstimator, features: npt.NDArray) -> float:
         return float(scorer(estimator, select_columns(X, columns=features), y))
 
@@ -57,9 +48,7 @@ def column_scorer(
 
 
 def resolve_n_features(
-    *,
-    n_features_to_select: int | float | None,
-    n_features: int
+    *, n_features_to_select: int | float | None, n_features: int
 ) -> int:
     if n_features_to_select is None:
         return n_features // 2
@@ -79,9 +68,7 @@ def resolve_n_features(
 
 
 def importance_stats(
-    importances: npt.NDArray,
-    *,
-    kept: npt.NDArray
+    importances: npt.NDArray, *, kept: npt.NDArray
 ) -> tuple[float, float]:
     """Fraction of the importance kept, and its shortfall with respect to
     keeping the same number of most important features (as RFE would)."""
@@ -90,7 +77,7 @@ def importance_stats(
         return np.nan, np.nan
 
     retained = importances[kept].sum() / total
-    best = np.sort(importances)[::-1][:kept.sum()].sum() / total
+    best = np.sort(importances)[::-1][: kept.sum()].sum() / total
     return float(retained), float(max(best - retained, 0.0))
 
 
@@ -135,7 +122,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         step: int,
         n_select: int,
         monitor: Monitoring,
-        fit_params: dict[str, Any]
+        fit_params: dict[str, Any],
     ) -> tuple[npt.NDArray, npt.NDArray, Termination]:
         n_features = X.shape[1]
         support = np.ones(n_features, dtype=bool)
@@ -170,18 +157,20 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
                 score = monitor.scorer(estimator, features)
                 monitor.score_time += time.perf_counter() - start
 
-            monitor.record(row={
-                "n_features": int(support.sum()),
-                "support": support.copy(),
-                "removed": threshold,
-                "n_feasible_probes": 0,
-                "n_infeasible_probes": 0,
-                "retained_importance": retained,
-                "importance_gap": gap,
-                "fit_time": fit_time,
-                "solve_time": 0.0,
-                "score": score,
-            })
+            monitor.record(
+                row={
+                    "n_features": int(support.sum()),
+                    "support": support.copy(),
+                    "removed": threshold,
+                    "n_feasible_probes": 0,
+                    "n_infeasible_probes": 0,
+                    "retained_importance": retained,
+                    "importance_gap": gap,
+                    "fit_time": fit_time,
+                    "solve_time": 0.0,
+                    "score": score,
+                }
+            )
 
             if monitor.stop:
                 termination = Termination.STOPPED
@@ -202,7 +191,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         step: int,
         n_select: int,
         monitor: Monitoring,
-        fit_params: dict[str, Any]
+        fit_params: dict[str, Any],
     ) -> tuple[npt.NDArray, npt.NDArray, Termination]:
         n_features = len(feature_names)
         support = np.ones(n_features, dtype=bool)
@@ -230,9 +219,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
 
             ordered = [
                 feature_names[i]
-                for i in features[
-                    np.argsort(importances[features], kind="stable")
-                ]
+                for i in features[np.argsort(importances[features], kind="stable")]
             ]
 
             # normalized importances plus a small offset, so that the solver
@@ -245,9 +232,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
 
             start = time.perf_counter()
             result = self.solver_.eliminate(
-                weights=weights,
-                ordered=ordered,
-                n_remove=n_remove
+                weights=weights, ordered=ordered, n_remove=n_remove
             )
             solve_time = time.perf_counter() - start
             monitor.solve_time += solve_time
@@ -259,17 +244,14 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
                 break
             if result.status not in ("OPTIMAL", "FEASIBLE"):
                 raise RuntimeError(
-                    f"{type(self).__name__}: the solver returned "
-                    f"{result.status}."
+                    f"{type(self).__name__}: the solver returned {result.status}."
                 )
 
             solution = result.solution
             candidates = result.candidates
 
             # Monitoring block
-            retained, gap = importance_stats(
-                importances, kept=support & solution
-            )
+            retained, gap = importance_stats(importances, kept=support & solution)
 
             score = np.nan
             if monitor.scorer is not None:
@@ -277,18 +259,20 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
                 score = monitor.scorer(estimator, features)
                 monitor.score_time += time.perf_counter() - start
 
-            monitor.record(row={
-                "n_features": int(support.sum()),
-                "support": support.copy(),
-                "removed": int(support.sum() - (support & solution).sum()),
-                "n_feasible_probes": result.n_feasible_probes,
-                "n_infeasible_probes": result.n_infeasible_probes,
-                "retained_importance": retained,
-                "importance_gap": gap,
-                "fit_time": fit_time,
-                "solve_time": solve_time,
-                "score": score,
-            })
+            monitor.record(
+                row={
+                    "n_features": int(support.sum()),
+                    "support": support.copy(),
+                    "removed": int(support.sum() - (support & solution).sum()),
+                    "n_feasible_probes": result.n_feasible_probes,
+                    "n_infeasible_probes": result.n_infeasible_probes,
+                    "retained_importance": retained,
+                    "importance_gap": gap,
+                    "fit_time": fit_time,
+                    "solve_time": solve_time,
+                    "score": score,
+                }
+            )
             if monitor.stop:
                 termination = Termination.STOPPED
                 break
@@ -298,9 +282,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             for index in removed:
                 if feature_names[index] in candidates:
                     continue
-                self.solver_.build_exclude_constraint(
-                    feature=feature_names[index]
-                )
+                self.solver_.build_exclude_constraint(feature=feature_names[index])
 
             support = support & solution
             ranking[~support] += 1
@@ -314,7 +296,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         y: npt.NDArray,
         support: npt.NDArray,
         monitor: Monitoring,
-        fit_params: dict[str, Any]
+        fit_params: dict[str, Any],
     ) -> BaseEstimator:
         """Fit a clone on the selected features and record the final row."""
         features = np.flatnonzero(support)
@@ -332,18 +314,20 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             score = monitor.scorer(estimator, features)
             monitor.score_time += time.perf_counter() - start
 
-        monitor.record(row={
-            "n_features": int(support.sum()),
-            "support": support.copy(),
-            "removed": np.nan,
-            "n_feasible_probes": np.nan,
-            "n_infeasible_probes": np.nan,
-            "retained_importance": np.nan,
-            "importance_gap": np.nan,
-            "fit_time": fit_time,
-            "solve_time": np.nan,
-            "score": score,
-        })
+        monitor.record(
+            row={
+                "n_features": int(support.sum()),
+                "support": support.copy(),
+                "removed": np.nan,
+                "n_feasible_probes": np.nan,
+                "n_infeasible_probes": np.nan,
+                "retained_importance": np.nan,
+                "importance_gap": np.nan,
+                "fit_time": fit_time,
+                "solve_time": np.nan,
+                "score": score,
+            }
+        )
         return estimator
 
     def _set_selected_features(
@@ -354,14 +338,10 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         support: npt.NDArray,
         ranking: npt.NDArray,
         monitor: Monitoring,
-        fit_params: dict[str, Any]
+        fit_params: dict[str, Any],
     ) -> None:
         self.estimator_ = self._record_selected(
-            X=X,
-            y=y,
-            support=support,
-            monitor=monitor,
-            fit_params=fit_params
+            X=X, y=y, support=support, monitor=monitor, fit_params=fit_params
         )
         self.history_ = monitor.history.to_dict()
         self.n_features_ = support.sum()
@@ -369,11 +349,10 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         self.ranking_ = ranking
 
     def _check_input(
-        self,
-        *,
-        X: pd.DataFrame | npt.NDArray,
-        y: pd.Series | npt.NDArray
-    ) -> tuple[pd.DataFrame | npt.NDArray, npt.NDArray, npt.NDArray, list[str], frozenset]:
+        self, *, X: pd.DataFrame | npt.NDArray, y: pd.Series | npt.NDArray
+    ) -> tuple[
+        pd.DataFrame | npt.NDArray, npt.NDArray, npt.NDArray, list[str], frozenset
+    ]:
         """Validate the data and return the input used for display and feature
         names, the validated X and y, and the non-numeric DataFrame columns."""
         feature_names = None
@@ -385,7 +364,8 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
                 raise TypeError("DataFrame column names must all be strings.")
 
             non_numeric_features = frozenset(
-                name for name, dtype in X.dtypes.items()
+                name
+                for name, dtype in X.dtypes.items()
                 if not pd.api.types.is_numeric_dtype(dtype)
             )
 
@@ -414,7 +394,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         X: npt.NDArray,
         feature_names: list[str],
         non_numeric_features: frozenset,
-        n_select: int
+        n_select: int,
     ) -> float:
         """Set `solver_` for one run (None when unconstrained) and return the
         time spent building the constraints."""
@@ -423,18 +403,14 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             return 0.0
 
         self.constraints.validate(
-            features=feature_names,
-            non_numeric_features=non_numeric_features
+            features=feature_names, non_numeric_features=non_numeric_features
         )
 
         # Translate the n_select features into an at_least_k constraint
         solver_constraints = Constraints(
             constraints=[
                 *self.constraints.constraints,
-                AtLeastKConstraint(
-                    features=feature_names,
-                    min_features=n_select
-                ),
+                AtLeastKConstraint(features=feature_names, min_features=n_select),
             ]
         )
 
@@ -442,13 +418,11 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             features=feature_names,
             constraints=solver_constraints,
             strategy=self.strategy,
-            **(self.solver_params or {})
+            **(self.solver_params or {}),
         )
 
         X_dense = X.toarray() if issparse(X) else X
-        X_df = pd.DataFrame(
-            data=X_dense, columns=feature_names
-        ).infer_objects()
+        X_df = pd.DataFrame(data=X_dense, columns=feature_names).infer_objects()
 
         build_start = time.perf_counter()
         self.solver_.build_constraints(X=X_df)
@@ -462,7 +436,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         feature_names: list[str],
         n_select: int,
         monitor: Monitoring,
-        fit_params: dict[str, Any]
+        fit_params: dict[str, Any],
     ) -> tuple[npt.NDArray, npt.NDArray, Termination]:
         """Eliminate features down to n_select, after `_setup`."""
         step = get_step(step=self.step, n_features=X.shape[1])
@@ -474,7 +448,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
                 step=step,
                 n_select=n_select,
                 monitor=monitor,
-                fit_params=fit_params
+                fit_params=fit_params,
             )
         return self._fit_constrained(
             X=X,
@@ -483,14 +457,11 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             step=step,
             n_select=n_select,
             monitor=monitor,
-            fit_params=fit_params
+            fit_params=fit_params,
         )
 
     def _describe_input(
-        self,
-        *,
-        X: pd.DataFrame | npt.NDArray,
-        n_select: int
+        self, *, X: pd.DataFrame | npt.NDArray, n_select: int
     ) -> list[tuple[str, str]]:
         return [
             *describe_input(estimator=self.estimator, X=X),
@@ -499,7 +470,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
                 n_select=n_select,
                 constraints=self.constraints,
                 strategy=self.strategy,
-                scoring=self.scoring
+                scoring=self.scoring,
             ),
         ]
 
@@ -509,7 +480,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             features=[],
             constraints=Constraints(constraints=[]),
             strategy=self.strategy,
-            **(self.solver_params or {})
+            **(self.solver_params or {}),
         )
 
     def _print_header(
@@ -519,7 +490,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         X: pd.DataFrame | npt.NDArray,
         n_select: int,
         build_time: float,
-        title: str | None = None
+        title: str | None = None,
     ) -> None:
         details = []
         if self.solver_ is not None:
@@ -530,15 +501,11 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         monitor.log.print_header(
             lines=self._describe_input(X=X, n_select=n_select),
             details=details,
-            title=title
+            title=title,
         )
 
     def _summarize(
-        self,
-        *,
-        monitor: Monitoring,
-        termination: Termination,
-        cpu_start: float
+        self, *, monitor: Monitoring, termination: Termination, cpu_start: float
     ) -> None:
         wall_time = time.perf_counter() - monitor.start
         cpu_time = time.process_time() - cpu_start
@@ -564,38 +531,31 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
 
         lines = [
             ("Termination", termination),
-            (
-                "Selected",
-                f"{int(self.n_features_)} of {self.n_features_in_} features"
-            ),
+            ("Selected", f"{int(self.n_features_)} of {self.n_features_in_} features"),
         ]
 
         if self.solver_ is not None and self.strategy == "probing":
-            lines.append((
-                "Probes",
-                f"{monitor.n_feasible_probes} feasible, "
-                f"{monitor.n_infeasible_probes} infeasible, {n_blocked} blocked"
-            ))
+            lines.append(
+                (
+                    "Probes",
+                    f"{monitor.n_feasible_probes} feasible, "
+                    f"{monitor.n_infeasible_probes} infeasible, {n_blocked} blocked",
+                )
+            )
 
-        lines.append((
-            "Time",
-            f"wall {wall_time:.3f}s ({', '.join(times)}), cpu {cpu_time:.3f}s"
-        ))
+        lines.append(
+            ("Time", f"wall {wall_time:.3f}s ({', '.join(times)}), cpu {cpu_time:.3f}s")
+        )
 
         monitor.log.print_summary(lines=lines)
 
     def _get_feature_importances(
-        self,
-        *,
-        estimator: BaseEstimator,
-        X: npt.NDArray
+        self, *, estimator: BaseEstimator, X: npt.NDArray
     ) -> npt.NDArray:
         getter = self.importance_getter
         params = self.importance_params or {}
         if callable(getter):
-            return np.abs(
-                np.asarray(getter(estimator=estimator, X=X, **params))
-            )
+            return np.abs(np.asarray(getter(estimator=estimator, X=X, **params)))
 
         if not isinstance(getter, str):
             raise ValueError(
@@ -628,7 +588,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         validate_parameter_constraints(
             self._parameter_constraints,
             self.get_params(deep=False),
-            caller_name=type(self).__name__
+            caller_name=type(self).__name__,
         )
 
         params = self.solver_params or {}
@@ -641,5 +601,5 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         validate_parameter_constraints(
             self.solver_params_constraints,
             params,
-            caller_name=f"{type(self).__name__} solver_params"
+            caller_name=f"{type(self).__name__} solver_params",
         )

@@ -4,7 +4,6 @@ from typing import Any, Callable, Hashable, Self
 
 import numpy.typing as npt
 import pandas as pd
-
 from sklearn.base import BaseEstimator
 from sklearn.metrics import check_scoring
 from sklearn.utils._param_validation import Interval, RealNotInt
@@ -154,7 +153,7 @@ class CRFE(BaseCRFE):
         importance_params: dict[str, Any] | None = None,
         importance_offset: float = 1e-3,
         callback: Callable[[dict[str, Any]], Any] | None = None,
-        verbose: int = 0
+        verbose: int = 0,
     ):
         self.estimator = estimator
         self.n_features_to_select = n_features_to_select
@@ -173,7 +172,7 @@ class CRFE(BaseCRFE):
         self,
         X: pd.DataFrame | npt.NDArray,
         y: pd.Series | npt.NDArray,
-        **fit_params: dict[Hashable, Any]
+        **fit_params: dict[Hashable, Any],
     ) -> Self:
         """Fit the selector and select the features.
 
@@ -205,19 +204,14 @@ class CRFE(BaseCRFE):
         start = time.perf_counter()
         cpu_start = time.process_time()
 
-        X_rfe, X, y, feature_names, non_numeric_features = self._check_input(
-            X=X,
-            y=y
-        )
+        X_rfe, X, y, feature_names, non_numeric_features = self._check_input(X=X, y=y)
         n_features = X.shape[1]
 
         scorer = (
             None
             if self.scoring is None
             else column_scorer(
-                check_scoring(self.estimator, scoring=self.scoring),
-                X=X_rfe,
-                y=y
+                check_scoring(self.estimator, scoring=self.scoring), X=X_rfe, y=y
             )
         )
 
@@ -228,31 +222,27 @@ class CRFE(BaseCRFE):
                 verbose=self.verbose,
                 scored=scorer is not None,
                 solver=self.constraints is not None,
-                probing=self.constraints is not None and self.strategy == "probing"
+                probing=self.constraints is not None and self.strategy == "probing",
             ),
             callback=self.callback,
-            start=start
+            start=start,
         )
 
         if self.constraints is not None and self.n_features_to_select is None:
             n_select = 1
         else:
             n_select = resolve_n_features(
-                n_features_to_select=self.n_features_to_select,
-                n_features=n_features
+                n_features_to_select=self.n_features_to_select, n_features=n_features
             )
 
         build_time = self._setup(
             X=X,
             feature_names=feature_names,
             non_numeric_features=non_numeric_features,
-            n_select=n_select
+            n_select=n_select,
         )
         self._print_header(
-            monitor=monitor,
-            X=X_rfe,
-            n_select=n_select,
-            build_time=build_time
+            monitor=monitor, X=X_rfe, n_select=n_select, build_time=build_time
         )
 
         support, ranking, termination = self._run(
@@ -261,7 +251,7 @@ class CRFE(BaseCRFE):
             feature_names=feature_names,
             n_select=n_select,
             monitor=monitor,
-            fit_params=fit_params
+            fit_params=fit_params,
         )
 
         self._set_selected_features(
@@ -270,13 +260,9 @@ class CRFE(BaseCRFE):
             support=support,
             ranking=ranking,
             monitor=monitor,
-            fit_params=fit_params
+            fit_params=fit_params,
         )
 
-        self._summarize(
-            monitor=monitor,
-            termination=termination,
-            cpu_start=cpu_start
-        )
+        self._summarize(monitor=monitor, termination=termination, cpu_start=cpu_start)
 
         return self

@@ -3,7 +3,6 @@ from typing import Callable
 
 import numpy as np
 import pandas as pd
-
 from ortools.sat.python import cp_model
 
 from .constraints import (
@@ -16,7 +15,7 @@ from .constraints import (
     MaxCorrelationConstraint,
     MinMaxConstraint,
     OnlyEnforceIfConstraint,
-    OnlyExcludeIfConstraint
+    OnlyExcludeIfConstraint,
 )
 
 # CP-SAT only accepts integer coefficients, so floats are scaled and rounded
@@ -36,7 +35,7 @@ class CPSolver:
         features: list[str],
         constraints: Constraints,
         num_workers: int = 1,
-        time_limit: float = 10.0
+        time_limit: float = 10.0,
     ):
         self.features = features
         self.constraints = constraints
@@ -69,23 +68,16 @@ class CPSolver:
                 message += f" Conflicting constraints{note}:\n{lines}"
             raise ValueError(message)
 
-    def build_constraints(
-        self,
-        *,
-        X: pd.DataFrame
-    ) -> None:
+    def build_constraints(self, *, X: pd.DataFrame) -> None:
         self.x = {
-            feature: self.model.new_bool_var(name=feature)
-            for feature in self.features
+            feature: self.model.new_bool_var(name=feature) for feature in self.features
         }
 
         # correlation matrices are shared by constraints using the same method
         corr_cache = {}
 
         for constraint in self.constraints.constraints:
-            self.build_constraint(
-                X=X, constraint=constraint, corr_cache=corr_cache
-            )
+            self.build_constraint(X=X, constraint=constraint, corr_cache=corr_cache)
 
         self.feasibility_check(X=X)
 
@@ -96,7 +88,7 @@ class CPSolver:
         *,
         X: pd.DataFrame,
         constraint: Constraint,
-        corr_cache: dict[str | Callable, pd.DataFrame]
+        corr_cache: dict[str | Callable, pd.DataFrame],
     ) -> None:
         if isinstance(constraint, MaxCorrelationConstraint):
             self.build_max_correlation_constraint(
@@ -107,9 +99,7 @@ class CPSolver:
                 features=constraint.features, constraint=constraint
             )
         elif isinstance(constraint, MinMaxConstraint):
-            self.build_group_constraint(
-                features=self.features, constraint=constraint
-            )
+            self.build_group_constraint(features=self.features, constraint=constraint)
         elif isinstance(constraint, OnlyEnforceIfConstraint):
             self.build_only_enforce_if_constraint(constraint=constraint)
         elif isinstance(constraint, OnlyExcludeIfConstraint):
@@ -122,9 +112,7 @@ class CPSolver:
             self.build_knapsack_constraint(constraint=constraint)
 
     def explain_infeasibility(
-        self,
-        *,
-        X: pd.DataFrame
+        self, *, X: pd.DataFrame
     ) -> tuple[list[Constraint], bool]:
         """Constraints that cannot hold together, and whether the set is minimal.
 
@@ -136,8 +124,7 @@ class CPSolver:
         model, x = self.model, self.x
         self.model = cp_model.CpModel()
         self.x = {
-            feature: self.model.new_bool_var(name=feature)
-            for feature in self.features
+            feature: self.model.new_bool_var(name=feature) for feature in self.features
         }
 
         try:
@@ -147,9 +134,7 @@ class CPSolver:
             for constraint in self.constraints.constraints:
                 literal = self.model.new_bool_var(name="")
                 first = len(self.model.proto.constraints)
-                self.build_constraint(
-                    X=X, constraint=constraint, corr_cache=corr_cache
-                )
+                self.build_constraint(X=X, constraint=constraint, corr_cache=corr_cache)
                 # the proto constraints added by this constraint
                 for i in range(first, len(self.model.proto.constraints)):
                     self.model.proto.constraints[i].enforcement_literal.append(
@@ -158,9 +143,7 @@ class CPSolver:
                 literals.append(literal)
 
             position = {literal.index: i for i, literal in enumerate(literals)}
-            status = self.solve_assuming(
-                literals=literals, subset=range(len(literals))
-            )
+            status = self.solve_assuming(literals=literals, subset=range(len(literals)))
             if status != cp_model.INFEASIBLE:
                 return [], False
 
@@ -170,9 +153,7 @@ class CPSolver:
             )
 
             minimal = True
-            deadline = (
-                time.perf_counter() + self.solver.parameters.max_time_in_seconds
-            )
+            deadline = time.perf_counter() + self.solver.parameters.max_time_in_seconds
             for i in list(core):
                 if time.perf_counter() > deadline:
                     minimal = False
@@ -191,10 +172,7 @@ class CPSolver:
             self.model, self.x = model, x
 
     def solve_assuming(
-        self,
-        *,
-        literals: list[cp_model.IntVar],
-        subset: list[int]
+        self, *, literals: list[cp_model.IntVar], subset: list[int]
     ) -> int:
         self.model.clear_assumptions()
         for i in subset:
@@ -209,7 +187,7 @@ class CPSolver:
         *,
         X: pd.DataFrame,
         constraint: MaxCorrelationConstraint,
-        corr_cache: dict[str | Callable, pd.DataFrame]
+        corr_cache: dict[str | Callable, pd.DataFrame],
     ) -> None:
         if constraint.method not in corr_cache:
             corr_cache[constraint.method] = X[self.features].corr(
@@ -232,72 +210,47 @@ class CPSolver:
             self.model.add(self.x[names[i]] + self.x[names[j]] <= 1)
 
     def build_group_constraint(
-        self,
-        *,
-        features: list[str],
-        constraint: GroupConstraint | MinMaxConstraint
+        self, *, features: list[str], constraint: GroupConstraint | MinMaxConstraint
     ) -> None:
-        group_sum = cp_model.LinearExpr.sum(
-            [self.x[feature] for feature in features]
-        )
+        group_sum = cp_model.LinearExpr.sum([self.x[feature] for feature in features])
         self.model.add_linear_expression_in_domain(
             linear_expr=group_sum,
-            domain=cp_model.Domain(
-                constraint.min_features,
-                constraint.max_features
-            )
+            domain=cp_model.Domain(constraint.min_features, constraint.max_features),
         )
 
     def build_only_enforce_if_constraint(
-        self,
-        *,
-        constraint: OnlyEnforceIfConstraint
+        self, *, constraint: OnlyEnforceIfConstraint
     ) -> None:
         self.model.add_implication(
             self.x[constraint.feature1], self.x[constraint.feature2]
         )
 
     def build_only_exclude_if_constraint(
-        self,
-        *,
-        constraint: OnlyExcludeIfConstraint
+        self, *, constraint: OnlyExcludeIfConstraint
     ) -> None:
         self.model.add_implication(
             self.x[constraint.feature1], self.x[constraint.feature2].Not()
         )
 
-    def build_fixed_constraint(
-        self,
-        *,
-        constraint: FixedConstraint
-    ) -> None:
+    def build_fixed_constraint(self, *, constraint: FixedConstraint) -> None:
         self.model.add(self.x[constraint.feature] == 1)
 
-    def build_all_or_none_constraint(
-        self,
-        *,
-        constraint: AllOrNoneConstraint
-    ) -> None:
+    def build_all_or_none_constraint(self, *, constraint: AllOrNoneConstraint) -> None:
         features = constraint.features
-        
+
         for feature in features[1:]:
             self.model.add(self.x[feature] == self.x[features[0]])
 
-    def build_knapsack_constraint(
-        self,
-        *,
-        constraint: KnapsackConstraint
-    ) -> None:
+    def build_knapsack_constraint(self, *, constraint: KnapsackConstraint) -> None:
         # weights are relative to the budget, so that the integer scale does not
         # depend on their units
         coefficients = [
-            round(weight / constraint.budget * SCALE)
-            for weight in constraint.weights
+            round(weight / constraint.budget * SCALE) for weight in constraint.weights
         ]
 
         self.model.add(
             cp_model.LinearExpr.weighted_sum(
-                [self.x[feature] for feature in constraint.features],
-                coefficients
-            ) <= SCALE
+                [self.x[feature] for feature in constraint.features], coefficients
+            )
+            <= SCALE
         )

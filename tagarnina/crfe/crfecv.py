@@ -33,7 +33,10 @@ class CRFECV(BaseCRFE):
         *,
         min_features_to_select: int = 1,
         step: int | float = 1,
-        cv: int | BaseCrossValidator | Iterable[tuple[npt.NDArray, npt.NDArray]] | None = None,
+        cv: int
+        | BaseCrossValidator
+        | Iterable[tuple[npt.NDArray, npt.NDArray]]
+        | None = None,
         constraints: Constraints | None = None,
         strategy: str = "probing",
         solver_params: dict[str, Any] | None = None,
@@ -41,7 +44,7 @@ class CRFECV(BaseCRFE):
         importance_getter: str | Callable = "auto",
         importance_params: dict[str, Any] | None = None,
         importance_offset: float = 1e-3,
-        verbose: int = 0
+        verbose: int = 0,
     ):
         self.estimator = estimator
         self.min_features_to_select = min_features_to_select
@@ -60,7 +63,7 @@ class CRFECV(BaseCRFE):
         self,
         X: pd.DataFrame | npt.NDArray,
         y: pd.Series | npt.NDArray,
-        **fit_params: dict[Hashable, Any]
+        **fit_params: dict[Hashable, Any],
     ) -> Self:
         """Fit the selector, choosing the number of features by cross-validation.
 
@@ -104,13 +107,9 @@ class CRFECV(BaseCRFE):
         start = time.perf_counter()
         cpu_start = time.process_time()
 
-        X_rfe, X, y, feature_names, non_numeric_features = self._check_input(
-            X=X,
-            y=y
-        )
+        X_rfe, X, y, feature_names, non_numeric_features = self._check_input(X=X, y=y)
         n_select = resolve_n_features(
-            n_features_to_select=self.min_features_to_select,
-            n_features=X.shape[1]
+            n_features_to_select=self.min_features_to_select, n_features=X.shape[1]
         )
 
         scorer = check_scoring(self.estimator, scoring=self.scoring)
@@ -120,17 +119,13 @@ class CRFECV(BaseCRFE):
         probing = solver and self.strategy == "probing"
 
         log = CRFELogger(
-            verbose=self.verbose,
-            scored=False,
-            solver=solver,
-            probing=probing
+            verbose=self.verbose, scored=False, solver=solver, probing=probing
         )
         log.print_banner()
         log.print_lines(lines=self._describe_input(X=X_rfe, n_select=n_select))
         if solver:
             log.print_lines(
-                lines=describe_solver(solver=self._probe_solver()),
-                min_verbose=2
+                lines=describe_solver(solver=self._probe_solver()), min_verbose=2
             )
         log.print_lines(lines=[("CV folds", str(n_folds))])
 
@@ -146,7 +141,7 @@ class CRFECV(BaseCRFE):
                 X=_safe_indexing(X, train),
                 feature_names=feature_names,
                 non_numeric_features=non_numeric_features,
-                n_select=n_select
+                n_select=n_select,
             )
             monitor = Monitoring(
                 scorer=column_scorer(scorer, X=X_test, y=y_test),
@@ -155,17 +150,18 @@ class CRFECV(BaseCRFE):
                     verbose=2 if self.verbose >= 2 else 0,
                     scored=True,
                     solver=solver,
-                    probing=probing
+                    probing=probing,
                 ),
-                start=time.perf_counter()
+                start=time.perf_counter(),
             )
             monitor.log.print_fold_start(
                 index=index,
                 n_folds=n_folds,
                 details=(
                     describe_model(solver=self.solver_, build_time=build_time)
-                    if solver else []
-                )
+                    if solver
+                    else []
+                ),
             )
 
             support, _, _ = self._run(
@@ -174,14 +170,14 @@ class CRFECV(BaseCRFE):
                 feature_names=feature_names,
                 n_select=n_select,
                 monitor=monitor,
-                fit_params=fit_params
+                fit_params=fit_params,
             )
             self._record_selected(
                 X=X_train_rfe,
                 y=y_train,
                 support=support,
                 monitor=monitor,
-                fit_params=fit_params
+                fit_params=fit_params,
             )
 
             history = monitor.history.to_dict()
@@ -201,12 +197,11 @@ class CRFECV(BaseCRFE):
                 n_test=len(test),
                 best=best,
                 score=best_score,
-                elapsed=time.perf_counter() - start
+                elapsed=time.perf_counter() - start,
             )
 
         sizes = sorted(
-            set.intersection(*(set(fold) for fold in fold_scores)),
-            reverse=True
+            set.intersection(*(set(fold) for fold in fold_scores)), reverse=True
         )
         scores = np.array([[fold[size] for size in sizes] for fold in fold_scores])
         mean_scores = scores.mean(axis=0)
@@ -225,13 +220,10 @@ class CRFECV(BaseCRFE):
             sizes=sizes,
             mean_scores=mean_scores,
             std_scores=scores.std(axis=0),
-            selected=n_best
+            selected=n_best,
         )
         monitor = Monitoring(
-            scorer=None,
-            history=History(scored=False),
-            log=log,
-            start=start
+            scorer=None, history=History(scored=False), log=log, start=start
         )
         for fold_monitor in fold_monitors:
             monitor.fit_time += fold_monitor.fit_time
@@ -244,14 +236,14 @@ class CRFECV(BaseCRFE):
             X=X,
             feature_names=feature_names,
             non_numeric_features=non_numeric_features,
-            n_select=n_best
+            n_select=n_best,
         )
         self._print_header(
             monitor=monitor,
             X=X_rfe,
             n_select=n_best,
             build_time=build_time,
-            title=f"Final fit with {n_best} features"
+            title=f"Final fit with {n_best} features",
         )
         support, ranking, termination = self._run(
             X=X_rfe,
@@ -259,7 +251,7 @@ class CRFECV(BaseCRFE):
             feature_names=feature_names,
             n_select=n_best,
             monitor=monitor,
-            fit_params=fit_params
+            fit_params=fit_params,
         )
         self._set_selected_features(
             X=X_rfe,
@@ -267,18 +259,14 @@ class CRFECV(BaseCRFE):
             support=support,
             ranking=ranking,
             monitor=monitor,
-            fit_params=fit_params
+            fit_params=fit_params,
         )
         # Sizes outside the cross-validated set have no mean score
         mean_by_size = dict(zip(sizes, mean_scores.tolist()))
         self.history_["score"] = np.array(
             [mean_by_size.get(n, np.nan) for n in self.history_["n_features"].tolist()],
-            dtype=float
+            dtype=float,
         )
-        self._summarize(
-            monitor=monitor,
-            termination=termination,
-            cpu_start=cpu_start
-        )
+        self._summarize(monitor=monitor, termination=termination, cpu_start=cpu_start)
 
         return self

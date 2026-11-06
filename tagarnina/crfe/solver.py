@@ -1,10 +1,8 @@
 import logging
-
 from dataclasses import dataclass
 
 import numpy as np
 import numpy.typing as npt
-
 from ortools.sat.python import cp_model
 
 from ..optimization.constraints import Constraints
@@ -32,13 +30,13 @@ class CRFESolver(CPSolver):
         constraints: Constraints,
         strategy: str = "greedy",
         num_workers: int = 1,
-        time_limit: float = 10.0
+        time_limit: float = 10.0,
     ):
         super().__init__(
             features=features,
             constraints=constraints,
             num_workers=num_workers,
-            time_limit=time_limit
+            time_limit=time_limit,
         )
         self.strategy = strategy
 
@@ -51,11 +49,7 @@ class CRFESolver(CPSolver):
         self.n_infeasible_probes = 0
 
     def eliminate(
-        self,
-        *,
-        weights: npt.NDArray,
-        ordered: list[str],
-        n_remove: int
+        self, *, weights: npt.NDArray, ordered: list[str], n_remove: int
     ) -> EliminationResult:
         """Exclude up to n_remove features, taken from ordered (worst first),
         and solve. Returns the status, the solution, the excluded features and
@@ -69,9 +63,7 @@ class CRFESolver(CPSolver):
                 self.build_exclude_constraint(feature=feature)
             status_name, solution = self.solve(weights=weights)
         else:
-            status_name, solution = self.solve(
-                weights=weights, trial=candidates
-            )
+            status_name, solution = self.solve(weights=weights, trial=candidates)
             if status_name == "INFEASIBLE":
                 candidates = self.find_removable(ordered=ordered, n_remove=n_remove)
                 if candidates:
@@ -88,15 +80,10 @@ class CRFESolver(CPSolver):
             solution=solution,
             candidates=candidates,
             n_feasible_probes=self.n_feasible_probes - n_feasible,
-            n_infeasible_probes=self.n_infeasible_probes - n_infeasible
+            n_infeasible_probes=self.n_infeasible_probes - n_infeasible,
         )
 
-    def find_removable(
-        self,
-        *,
-        ordered: list[str],
-        n_remove: int
-    ) -> list[str]:
+    def find_removable(self, *, ordered: list[str], n_remove: int) -> list[str]:
         """Probe candidates one by one on top of the accepted exclusions."""
         self.model.clear_objective()
         removable = []
@@ -124,25 +111,18 @@ class CRFESolver(CPSolver):
 
         return removable
 
-    def set_assumptions(
-        self,
-        *,
-        trial: list[str]
-    ) -> None:
+    def set_assumptions(self, *, trial: list[str]) -> None:
         self.model.clear_assumptions()
         for feature in [*self.excluded, *trial]:
             self.model.add_assumption(self.drop[feature])
 
     def solve(
-        self,
-        *,
-        weights: npt.NDArray,
-        trial: list[str] | None = None
+        self, *, weights: npt.NDArray, trial: list[str] | None = None
     ) -> tuple[str, npt.NDArray[np.bool]]:
         self.model.maximize(
             cp_model.LinearExpr.weighted_sum(
                 [self.x[feature] for feature in self.features],
-                [round(weight * SCALE) for weight in weights]
+                [round(weight * SCALE) for weight in weights],
             )
         )
 
@@ -158,7 +138,7 @@ class CRFESolver(CPSolver):
                     self.solver.boolean_value(self.x[feature])
                     for feature in self.features
                 ],
-                dtype=bool
+                dtype=bool,
             )
         else:
             solution = np.zeros(len(self.features), dtype=bool)
@@ -175,11 +155,7 @@ class CRFESolver(CPSolver):
             self.model.add(self.x[feature] == 0).only_enforce_if(literal)
             self.drop[feature] = literal
 
-    def build_exclude_constraint(
-        self,
-        *,
-        feature: str
-    ) -> None:
+    def build_exclude_constraint(self, *, feature: str) -> None:
         if self.drop is None:
             self.model.add(self.x[feature] == 0)
         elif feature not in self.excluded:
