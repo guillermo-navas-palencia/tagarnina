@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dev dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Ruff lint
+        run: python -m ruff check tagarnina tests
+      - name: Ruff format
+        run: python -m ruff format --check tagarnina tests
+
+  typecheck:
+    name: Type check (mypy)
+    runs-on: ubuntu-latest
+    # Non-blocking until the existing mypy errors are fixed.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dev dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Run mypy
+        run: python -m mypy tagarnina
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dev dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Run tests with coverage
+        run: python -m pytest --cov=tagarnina --cov-report=term-missing
+
+  build:
+    name: Build and check package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install build twine
+          python -m build
+          python -m twine check --strict dist/*
+      - name: Install built wheel outside the source tree
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m venv smoke
+          smoke/bin/python -m pip install "${GITHUB_WORKSPACE}"/dist/*.whl
+          smoke/bin/python -c "import tagarnina; print(tagarnina.__version__)"
