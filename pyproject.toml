@@ -21,7 +21,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pytest-cov", "ruff", "mypy"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = false
+
+[[tool.mypy.overrides]]
+module = ["sklearn.*", "pandas.*", "ortools.*", "scipy.*"]
+ignore_missing_imports = true
 
 [tool.setuptools.dynamic]
 version = { attr = "tagarnina.__version__" }
