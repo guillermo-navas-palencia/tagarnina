@@ -10,10 +10,7 @@ from tagarnina.optimization.constraints import Constraints, FixedConstraint
 @pytest.fixture
 def data():
     rng = np.random.default_rng(0)
-    X = pd.DataFrame(
-        rng.normal(size=(200, 6)),
-        columns=[f"x{i}" for i in range(6)]
-    )
+    X = pd.DataFrame(rng.normal(size=(200, 6)), columns=[f"x{i}" for i in range(6)])
     y = (X["x0"] + X["x1"] + 0.1 * rng.normal(size=200) > 0).astype(int)
     return X, y
 
@@ -28,11 +25,7 @@ def expected_n_features(cv_results):
 
 def test_selects_size_with_best_mean_score(data):
     X, y = data
-    selector = CRFECV(
-        LogisticRegression(),
-        min_features_to_select=2,
-        cv=3
-    ).fit(X, y)
+    selector = CRFECV(LogisticRegression(), min_features_to_select=2, cv=3).fit(X, y)
 
     cv_results = selector.cv_results_
     assert np.all(np.diff(cv_results["n_features"]) < 0)
@@ -50,21 +43,15 @@ def test_selects_size_with_best_mean_score(data):
         zip(cv_results["n_features"].tolist(), cv_results["mean_test_score"].tolist())
     )
     assert np.allclose(
-        history["score"],
-        [mean_by_size[n] for n in history["n_features"].tolist()]
+        history["score"], [mean_by_size[n] for n in history["n_features"].tolist()]
     )
 
 
 def test_fixed_feature_is_kept(data):
     X, y = data
-    constraints = Constraints(
-        constraints=[FixedConstraint(feature="x5")]
-    )
+    constraints = Constraints(constraints=[FixedConstraint(feature="x5")])
     selector = CRFECV(
-        LogisticRegression(),
-        min_features_to_select=2,
-        cv=3,
-        constraints=constraints
+        LogisticRegression(), min_features_to_select=2, cv=3, constraints=constraints
     ).fit(X, y)
 
     assert selector.support_[5]
@@ -99,7 +86,7 @@ def test_verbose_reports_solver_and_model_details(data, capsys):
         min_features_to_select=2,
         cv=3,
         constraints=constraints,
-        verbose=1
+        verbose=1,
     ).fit(X, y)
     lines = capsys.readouterr().out.splitlines()
     assert not any(line.startswith(("Solver", "Model")) for line in lines)
@@ -109,7 +96,7 @@ def test_verbose_reports_solver_and_model_details(data, capsys):
         min_features_to_select=2,
         cv=3,
         constraints=constraints,
-        verbose=2
+        verbose=2,
     ).fit(X, y)
     lines = capsys.readouterr().out.splitlines()
     solver = [i for i, line in enumerate(lines) if line.startswith("Solver")]
@@ -124,11 +111,9 @@ def test_verbose_reports_solver_and_model_details(data, capsys):
 
 def test_accepts_numpy_input(data):
     X, y = data
-    selector = CRFECV(
-        LogisticRegression(),
-        min_features_to_select=2,
-        cv=3
-    ).fit(X.to_numpy(), y.to_numpy())
+    selector = CRFECV(LogisticRegression(), min_features_to_select=2, cv=3).fit(
+        X.to_numpy(), y.to_numpy()
+    )
 
     assert selector.support_.shape == (6,)
     assert selector.n_features_ == expected_n_features(selector.cv_results_)
@@ -146,7 +131,7 @@ def test_ties_select_fewest_features(data):
         LogisticRegression(),
         min_features_to_select=2,
         cv=3,
-        scoring=lambda estimator, X, y: 0.0
+        scoring=lambda estimator, X, y: 0.0,
     ).fit(X, y)
 
     assert selector.n_features_ == 2
@@ -158,11 +143,9 @@ def test_accepts_explicit_splits(data):
         (np.arange(100, 200), np.arange(0, 100)),
         (np.arange(0, 100), np.arange(100, 200)),
     ]
-    selector = CRFECV(
-        LogisticRegression(),
-        min_features_to_select=2,
-        cv=splits
-    ).fit(X, y)
+    selector = CRFECV(LogisticRegression(), min_features_to_select=2, cv=splits).fit(
+        X, y
+    )
 
     assert "split1_test_score" in selector.cv_results_
     assert "split2_test_score" not in selector.cv_results_

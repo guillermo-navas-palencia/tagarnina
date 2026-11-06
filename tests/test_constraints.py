@@ -57,22 +57,30 @@ from tagarnina.optimization.constraints import (
             "at least one",
         ),
         (
-            lambda: GroupConstraint(features=["x0", "x0"], min_features=0, max_features=1),
+            lambda: GroupConstraint(
+                features=["x0", "x0"], min_features=0, max_features=1
+            ),
             ValueError,
             "unique",
         ),
         (
-            lambda: GroupConstraint(features=["x0", "x1"], min_features=-1, max_features=1),
+            lambda: GroupConstraint(
+                features=["x0", "x1"], min_features=-1, max_features=1
+            ),
             ValueError,
             "non-negative",
         ),
         (
-            lambda: GroupConstraint(features=["x0", "x1"], min_features=2, max_features=1),
+            lambda: GroupConstraint(
+                features=["x0", "x1"], min_features=2, max_features=1
+            ),
             ValueError,
             "less than or equal",
         ),
         (
-            lambda: GroupConstraint(features=["x0", "x1"], min_features=3, max_features=3),
+            lambda: GroupConstraint(
+                features=["x0", "x1"], min_features=3, max_features=3
+            ),
             ValueError,
             "cannot exceed",
         ),
@@ -112,12 +120,16 @@ from tagarnina.optimization.constraints import (
             "at least one",
         ),
         (
-            lambda: KnapsackConstraint(features=["x0", "x0"], weights=[1.0, 1.0], budget=1.0),
+            lambda: KnapsackConstraint(
+                features=["x0", "x0"], weights=[1.0, 1.0], budget=1.0
+            ),
             ValueError,
             "unique",
         ),
         (
-            lambda: KnapsackConstraint(features=["x0", "x1"], weights=[1.0], budget=1.0),
+            lambda: KnapsackConstraint(
+                features=["x0", "x1"], weights=[1.0], budget=1.0
+            ),
             ValueError,
             "lengths differ",
         ),

@@ -16,17 +16,14 @@ from tagarnina.optimization.constraints import (
     MaxCorrelationConstraint,
     MinMaxConstraint,
     OnlyEnforceIfConstraint,
-    OnlyExcludeIfConstraint
+    OnlyExcludeIfConstraint,
 )
 
 
 @pytest.fixture
 def data():
     rng = np.random.default_rng(0)
-    X = pd.DataFrame(
-        rng.normal(size=(200, 6)),
-        columns=[f"x{i}" for i in range(6)]
-    )
+    X = pd.DataFrame(rng.normal(size=(200, 6)), columns=[f"x{i}" for i in range(6)])
     y = (X["x0"] + X["x1"] + 0.1 * rng.normal(size=200) > 0).astype(int)
     return X, y
 
@@ -65,13 +62,9 @@ def test_history_tracks_each_elimination(data):
 
 def test_fixed_feature_is_kept(data):
     X, y = data
-    constraints = Constraints(
-        constraints=[FixedConstraint(feature="x5")]
-    )
+    constraints = Constraints(constraints=[FixedConstraint(feature="x5")])
     selector = CRFE(
-        LogisticRegression(),
-        n_features_to_select=2,
-        constraints=constraints
+        LogisticRegression(), n_features_to_select=2, constraints=constraints
     ).fit(X, y)
 
     assert selector.support_[5]
@@ -86,9 +79,7 @@ def test_at_most_k_group_is_enforced(data):
         ]
     )
     selector = CRFE(
-        LogisticRegression(),
-        n_features_to_select=3,
-        constraints=constraints
+        LogisticRegression(), n_features_to_select=3, constraints=constraints
     ).fit(X, y)
 
     assert selector.support_[2:].sum() <= 1
@@ -99,13 +90,11 @@ def test_infeasible_constraints_raise(data):
     constraints = Constraints(
         constraints=[
             AtMostKConstraint(features=["x2", "x3"], max_features=0),
-            FixedConstraint(feature="x2")
+            FixedConstraint(feature="x2"),
         ]
     )
     selector = CRFE(
-        LogisticRegression(),
-        n_features_to_select=2,
-        constraints=constraints
+        LogisticRegression(), n_features_to_select=2, constraints=constraints
     )
 
     with pytest.raises(ValueError, match="infeasible"):
@@ -115,9 +104,7 @@ def test_infeasible_constraints_raise(data):
 def test_callback_stops_the_fit(data):
     X, y = data
     selector = CRFE(
-        LogisticRegression(),
-        n_features_to_select=3,
-        callback=lambda row: True
+        LogisticRegression(), n_features_to_select=3, callback=lambda row: True
     ).fit(X, y)
 
     assert selector.summary_["termination"] == Termination.STOPPED
@@ -129,7 +116,7 @@ def test_callback_stops_the_fit(data):
     [
         {"n_features_to_select": 0},
         {"strategy": "unknown"},
-    ]
+    ],
 )
 def test_invalid_parameters_raise(data, params):
     X, y = data
@@ -143,7 +130,7 @@ def fit_with(X, y, constraints, n_features_to_select=3):
     return CRFE(
         LogisticRegression(),
         n_features_to_select=n_features_to_select,
-        constraints=Constraints(constraints=constraints)
+        constraints=Constraints(constraints=constraints),
     ).fit(X, y)
 
 
@@ -151,9 +138,7 @@ def test_max_correlation_keeps_correlated_pair_apart(data):
     X, y = data
     X = X.assign(x1=X["x0"] + 0.01 * X["x2"])
     selector = fit_with(
-        X,
-        y,
-        [MaxCorrelationConstraint(max_corr=0.9, features=["x0", "x1"])]
+        X, y, [MaxCorrelationConstraint(max_corr=0.9, features=["x0", "x1"])]
     )
 
     assert not (selector.support_[0] and selector.support_[1])
@@ -165,7 +150,7 @@ def test_at_least_k_group_selects_only_from_group(data):
         X,
         y,
         [AtLeastKConstraint(features=["x0", "x1", "x2"], min_features=2)],
-        n_features_to_select=2
+        n_features_to_select=2,
     )
 
     assert selector.support_[:3].sum() == 2
@@ -177,7 +162,7 @@ def test_group_constraint_bounds_selection(data):
     selector = fit_with(
         X,
         y,
-        [GroupConstraint(features=["x2", "x3", "x4"], min_features=1, max_features=1)]
+        [GroupConstraint(features=["x2", "x3", "x4"], min_features=1, max_features=1)],
     )
 
     assert selector.support_[2:5].sum() == 1
@@ -185,11 +170,7 @@ def test_group_constraint_bounds_selection(data):
 
 def test_min_max_constraint_bounds_total_selection(data):
     X, y = data
-    selector = fit_with(
-        X,
-        y,
-        [MinMaxConstraint(min_features=2, max_features=3)]
-    )
+    selector = fit_with(X, y, [MinMaxConstraint(min_features=2, max_features=3)])
 
     assert selector.support_.sum() == 3
 
@@ -203,7 +184,7 @@ def test_only_enforce_if_selects_implied_feature(data):
             FixedConstraint(feature="x0"),
             OnlyEnforceIfConstraint(feature1="x0", feature2="x1"),
         ],
-        n_features_to_select=2
+        n_features_to_select=2,
     )
 
     assert selector.support_[0]
@@ -219,7 +200,7 @@ def test_only_exclude_if_drops_excluded_feature(data):
             FixedConstraint(feature="x0"),
             OnlyExcludeIfConstraint(feature1="x0", feature2="x1"),
         ],
-        n_features_to_select=2
+        n_features_to_select=2,
     )
 
     assert selector.support_[0]
@@ -228,11 +209,7 @@ def test_only_exclude_if_drops_excluded_feature(data):
 
 def test_all_or_none_keeps_group_together(data):
     X, y = data
-    selector = fit_with(
-        X,
-        y,
-        [AllOrNoneConstraint(features=["x2", "x3", "x4"])]
-    )
+    selector = fit_with(X, y, [AllOrNoneConstraint(features=["x2", "x3", "x4"])])
 
     assert len(set(selector.support_[2:5].tolist())) == 1
 
@@ -246,9 +223,9 @@ def test_knapsack_limits_total_weight(data):
             KnapsackConstraint(
                 features=["x2", "x3", "x4", "x5"],
                 weights=[1.0, 1.0, 1.0, 1.0],
-                budget=2.0
+                budget=2.0,
             )
-        ]
+        ],
     )
 
     assert selector.support_.sum() == 3
