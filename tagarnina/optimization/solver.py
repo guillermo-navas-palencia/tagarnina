@@ -46,7 +46,7 @@ class CPSolver:
         self.solver.parameters.max_time_in_seconds = time_limit
 
         self.model = cp_model.CpModel()
-        self.x = None
+        self.x: dict[str, cp_model.IntVar] = {}
 
     @property
     def n_variables(self) -> int:
@@ -74,7 +74,7 @@ class CPSolver:
         }
 
         # correlation matrices are shared by constraints using the same method
-        corr_cache = {}
+        corr_cache: dict[str | Callable, pd.DataFrame] = {}
 
         for constraint in self.constraints.constraints:
             self.build_constraint(X=X, constraint=constraint, corr_cache=corr_cache)
@@ -128,7 +128,7 @@ class CPSolver:
         }
 
         try:
-            corr_cache = {}
+            corr_cache: dict[str | Callable, pd.DataFrame] = {}
             literals = []
 
             for constraint in self.constraints.constraints:

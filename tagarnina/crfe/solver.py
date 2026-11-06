@@ -41,9 +41,9 @@ class CRFESolver(CPSolver):
         self.strategy = strategy
 
         # probing strategy: exclusions are assumptions on drop literals
-        self.drop = None
-        self.excluded = []
-        self.blocked = set()
+        self.drop: dict[str, cp_model.IntVar] | None = None
+        self.excluded: list[str] = []
+        self.blocked: set[str] = set()
 
         self.n_feasible_probes = 0
         self.n_infeasible_probes = 0
@@ -86,7 +86,7 @@ class CRFESolver(CPSolver):
     def find_removable(self, *, ordered: list[str], n_remove: int) -> list[str]:
         """Probe candidates one by one on top of the accepted exclusions."""
         self.model.clear_objective()
-        removable = []
+        removable: list[str] = []
 
         for feature in ordered:
             if len(removable) == n_remove:
@@ -112,6 +112,8 @@ class CRFESolver(CPSolver):
         return removable
 
     def set_assumptions(self, *, trial: list[str]) -> None:
+        # drop literals exist only in probing mode, the only mode calling this
+        assert self.drop is not None
         self.model.clear_assumptions()
         for feature in [*self.excluded, *trial]:
             self.model.add_assumption(self.drop[feature])
@@ -138,10 +140,10 @@ class CRFESolver(CPSolver):
                     self.solver.boolean_value(self.x[feature])
                     for feature in self.features
                 ],
-                dtype=bool,
+                dtype=np.bool_,
             )
         else:
-            solution = np.zeros(len(self.features), dtype=bool)
+            solution = np.zeros(len(self.features), dtype=np.bool_)
 
         return status_name, solution
 
