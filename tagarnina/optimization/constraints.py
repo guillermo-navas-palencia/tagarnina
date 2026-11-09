@@ -19,6 +19,25 @@ def format_features(features: list[str], *, sep: str) -> str:
 
 @dataclass(kw_only=True)
 class MaxCorrelationConstraint(Constraint):
+    """Limit the pairwise correlation among the selected features.
+
+    Two features whose correlation is at least `max_corr` cannot be selected
+    together.
+
+    Parameters
+    ----------
+    max_corr : float
+        Maximum allowed correlation between two selected features, in [-1, 1],
+        or in [0, 1] if `absolute` is True.
+    features : list of str, default=None
+        Features the constraint applies to. If None, all features are used.
+        Must contain at least two unique names.
+    absolute : bool, default=False
+        If True, the absolute correlation is compared with `max_corr`.
+    method : {"pearson", "spearman", "kendall"} or callable, default="pearson"
+        Correlation method, as in :meth:`pandas.DataFrame.corr`.
+    """
+
     max_corr: float
     features: list[str] | None = None
     absolute: bool = False
@@ -81,6 +100,22 @@ def _validate_bounds(constraint: GroupConstraint | MinMaxConstraint) -> None:
 
 @dataclass(kw_only=True)
 class GroupConstraint(Constraint):
+    """Bound the number of selected features within a group.
+
+    The number of selected features in `features` must lie between
+    `min_features` and `max_features`. A `max_features` larger than the group
+    size is reduced to the group size.
+
+    Parameters
+    ----------
+    features : list of str
+        Names of the features in the group. Must be unique.
+    min_features : int
+        Minimum number of selected features in the group.
+    max_features : int
+        Maximum number of selected features in the group.
+    """
+
     features: list[str]
     min_features: int
     max_features: int
@@ -115,6 +150,18 @@ class GroupConstraint(Constraint):
 
 @dataclass(kw_only=True)
 class AtMostKConstraint(GroupConstraint):
+    """Select at most `max_features` features from a group.
+
+    Equivalent to a `GroupConstraint` with `min_features=0`.
+
+    Parameters
+    ----------
+    features : list of str
+        Names of the features in the group. Must be unique.
+    max_features : int
+        Maximum number of selected features in the group.
+    """
+
     min_features: int = field(default=0, init=False)
 
     def __str__(self) -> str:
@@ -123,6 +170,19 @@ class AtMostKConstraint(GroupConstraint):
 
 @dataclass(kw_only=True)
 class AtLeastKConstraint(GroupConstraint):
+    """Select at least `min_features` features from a group.
+
+    Equivalent to a `GroupConstraint` with `max_features` equal to the group
+    size.
+
+    Parameters
+    ----------
+    features : list of str
+        Names of the features in the group. Must be unique.
+    min_features : int
+        Minimum number of selected features in the group.
+    """
+
     max_features: int = field(init=False)
 
     def __post_init__(self):
@@ -135,6 +195,18 @@ class AtLeastKConstraint(GroupConstraint):
 
 @dataclass(kw_only=True)
 class MinMaxConstraint(Constraint):
+    """Bound the total number of selected features.
+
+    At most one `MinMaxConstraint` can be passed to `Constraints`.
+
+    Parameters
+    ----------
+    min_features : int
+        Minimum number of selected features.
+    max_features : int
+        Maximum number of selected features.
+    """
+
     min_features: int
     max_features: int
 
@@ -147,6 +219,16 @@ class MinMaxConstraint(Constraint):
 
 @dataclass(kw_only=True)
 class OnlyEnforceIfConstraint(Constraint):
+    """If `feature1` is selected, then `feature2` must be selected too.
+
+    Parameters
+    ----------
+    feature1 : str
+        Feature whose selection implies the selection of `feature2`.
+    feature2 : str
+        Feature that must be selected when `feature1` is.
+    """
+
     feature1: str
     feature2: str
 
@@ -162,6 +244,16 @@ class OnlyEnforceIfConstraint(Constraint):
 
 @dataclass(kw_only=True)
 class OnlyExcludeIfConstraint(Constraint):
+    """If `feature1` is selected, then `feature2` must not be selected.
+
+    Parameters
+    ----------
+    feature1 : str
+        Feature whose selection excludes `feature2`.
+    feature2 : str
+        Feature that cannot be selected when `feature1` is.
+    """
+
     feature1: str
     feature2: str
 
@@ -177,6 +269,14 @@ class OnlyExcludeIfConstraint(Constraint):
 
 @dataclass(kw_only=True)
 class FixedConstraint(Constraint):
+    """Always select the feature.
+
+    Parameters
+    ----------
+    feature : str
+        Name of the feature that must be selected.
+    """
+
     feature: str
 
     def __str__(self) -> str:
@@ -185,6 +285,14 @@ class FixedConstraint(Constraint):
 
 @dataclass(kw_only=True)
 class AllOrNoneConstraint(Constraint):
+    """Select either all of the features or none of them.
+
+    Parameters
+    ----------
+    features : list of str
+        Names of the features that are selected together. Must not be empty.
+    """
+
     features: list[str]
 
     def __post_init__(self):
@@ -199,7 +307,20 @@ class AllOrNoneConstraint(Constraint):
 
 @dataclass(kw_only=True)
 class KnapsackConstraint(Constraint):
-    """The total weight of the selected features cannot exceed the budget."""
+    """Limit the weighted sum of the selected features.
+
+    The total weight of the selected features cannot exceed `budget`.
+
+    Parameters
+    ----------
+    features : list of str
+        Names of the features. Must be unique.
+    weights : list of float
+        Non-negative, finite weight of each feature, in the same order as
+        `features`.
+    budget : float
+        Positive, finite budget for the total weight.
+    """
 
     features: list[str]
     weights: list[float]
@@ -232,6 +353,14 @@ class KnapsackConstraint(Constraint):
 
 @dataclass(kw_only=True)
 class Constraints:
+    """Collection of constraints used by `CRFE` and `CRFECV`.
+
+    Parameters
+    ----------
+    constraints : list of Constraint
+        Constraints to enforce during feature elimination.
+    """
+
     constraints: list[Constraint]
 
     def __post_init__(self):
