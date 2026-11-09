@@ -27,6 +27,20 @@ class CPSolver:
 
     Algorithms subclass it to add their own variables (see `_build_extra`)
     and their solve logic.
+
+    Parameters
+    ----------
+    features : list of str
+        Names of the features, one binary decision variable each.
+
+    constraints : Constraints
+        Constraints that the selected subset must satisfy.
+
+    num_workers : int, default=1
+        Number of CP-SAT search workers.
+
+    time_limit : float, default=10.0
+        Maximum solve time in seconds for each solve.
     """
 
     def __init__(
