@@ -23,6 +23,12 @@ Install from source::
 
 .. toctree::
    :maxdepth: 2
+   :caption: Examples
+
+   auto_examples/index
+
+.. toctree::
+   :maxdepth: 2
    :caption: Technical
 
    technical/algorithm
