@@ -1,4 +1,5 @@
 import time
+import warnings
 from collections.abc import Iterable
 from numbers import Integral
 from typing import Any, Callable, Hashable, Self
@@ -101,6 +102,12 @@ class CRFECV(BaseCRFE):
         ------
         ValueError
             If a parameter or a constraint is invalid.
+
+        Warns
+        -----
+        UserWarning
+            If the constraints are infeasible for the full set of features,
+            which is then excluded from the comparison.
         """
         self._validate_params()
 
@@ -117,6 +124,11 @@ class CRFECV(BaseCRFE):
         n_folds = cv.get_n_splits(X_rfe, y)
         solver = self.constraints is not None
         probing = solver and self.strategy == "probing"
+        full_feasible = not solver or self._full_set_feasible(
+            X=X,
+            feature_names=feature_names,
+            non_numeric_features=non_numeric_features,
+        )
 
         log = CRFELogger(
             verbose=self.verbose, scored=False, solver=solver, probing=probing
@@ -203,6 +215,16 @@ class CRFECV(BaseCRFE):
         sizes = sorted(
             set.intersection(*(set(fold) for fold in fold_scores)), reverse=True
         )
+        if not full_feasible:
+            # The first round is unconstrained, so the full set has a score
+            # even though the constraints do not allow it
+            sizes = [size for size in sizes if size != X.shape[1]]
+            warnings.warn(
+                f"The constraints are infeasible for the full set of {X.shape[1]} "
+                "features, which is excluded from the comparison.",
+                UserWarning,
+                stacklevel=2,
+            )
         scores = np.array([[fold[size] for size in sizes] for fold in fold_scores])
         mean_scores = scores.mean(axis=0)
 
@@ -270,3 +292,24 @@ class CRFECV(BaseCRFE):
         self._summarize(monitor=monitor, termination=termination, cpu_start=cpu_start)
 
         return self
+
+    def _full_set_feasible(
+        self,
+        *,
+        X: npt.NDArray,
+        feature_names: list[str],
+        non_numeric_features: frozenset,
+    ) -> bool:
+        """Whether the constraints allow keeping every feature."""
+        try:
+            self._setup(
+                X=X,
+                feature_names=feature_names,
+                non_numeric_features=non_numeric_features,
+                n_select=X.shape[1],
+            )
+        except ValueError as error:
+            if "the constraints are infeasible" not in str(error):
+                raise
+            return False
+        return True

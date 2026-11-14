@@ -4,7 +4,11 @@ import pytest
 from sklearn.linear_model import LogisticRegression
 
 from tagarnina.crfe.crfecv import CRFECV
-from tagarnina.optimization.constraints import Constraints, FixedConstraint
+from tagarnina.optimization.constraints import (
+    AtMostKConstraint,
+    Constraints,
+    FixedConstraint,
+)
 
 
 @pytest.fixture
@@ -56,6 +60,22 @@ def test_fixed_feature_is_kept(data):
 
     assert selector.support_[5]
     assert selector.n_features_ == expected_n_features(selector.cv_results_)
+
+
+def test_infeasible_full_set_is_excluded(data):
+    X, y = data
+    constraints = Constraints(
+        constraints=[AtMostKConstraint(features=["x2", "x3"], max_features=1)]
+    )
+    selector = CRFECV(
+        LogisticRegression(), min_features_to_select=2, cv=3, constraints=constraints
+    )
+
+    with pytest.warns(UserWarning, match="excluded from the comparison"):
+        selector.fit(X, y)
+
+    assert X.shape[1] not in selector.cv_results_["n_features"]
+    assert selector.n_features_ < X.shape[1]
 
 
 def test_verbose_reports_folds_before_final_fit(data, capsys):
