@@ -104,6 +104,8 @@ strategy, so everything above applies. The CV step adds these implications:
   about :math:`n_\text{folds} + 1` CRFE runs.
 - Data-dependent constraints are computed on the training rows of each fold. For
   example, the correlations used by ``MaxCorrelationConstraint``.
+- The full set of features is compared unless the constraints do not allow it, for
+  example under a budget. Then it is excluded and CRFECV warns.
 - Within each fold, every size reached by the search is scored on the test rows.
   These held-out scores are what CRFECV compares. In CRFE, the score is only a
   training-data record.
