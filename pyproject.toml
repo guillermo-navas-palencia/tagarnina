@@ -22,7 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "ruff", "mypy"]
-docs = ["sphinx", "pydata-sphinx-theme", "numpydoc", "sphinx-gallery", "matplotlib"]
+docs = ["sphinx", "pydata-sphinx-theme", "numpydoc", "sphinx-gallery", "matplotlib", "shap"]
 
 [tool.ruff]
 line-length = 88
