@@ -12,6 +12,23 @@ license-files = ["LICENSE"]
 authors = [
     { name = "Guillermo Navas-Palencia", email = "g.navas-palencia@gmail.com" },
 ]
+keywords = [
+    "feature selection",
+    "recursive feature elimination",
+    "constraints",
+    "CP-SAT",
+    "scikit-learn",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering",
+]
 requires-python = ">=3.12"
 dependencies = [
     "numpy",
@@ -19,6 +36,12 @@ dependencies = [
     "ortools",
     "scikit-learn"
 ]
+
+[project.urls]
+Homepage = "https://gnpalencia.org/tagarnina/"
+Documentation = "https://gnpalencia.org/tagarnina/"
+Repository = "https://github.com/guillermo-navas-palencia/tagarnina"
+Issues = "https://github.com/guillermo-navas-palencia/tagarnina/issues"
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-cov", "ruff", "mypy"]

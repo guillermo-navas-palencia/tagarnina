@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="branding/tagarnina.png" alt="tagarnina logo" width="300">
+  <img src="https://raw.githubusercontent.com/guillermo-navas-palencia/tagarnina/main/branding/tagarnina.png" alt="tagarnina logo" width="300">
 </p>
 
 [![CI](https://github.com/guillermo-navas-palencia/tagarnina/actions/workflows/ci.yml/badge.svg)](https://github.com/guillermo-navas-palencia/tagarnina/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://www.python.org/)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/guillermo-navas-palencia/tagarnina/blob/main/LICENSE)
 
 **tagarnina** is a Python library for feature selection with user-defined constraints. It implements constrained recursive feature elimination (CRFE), where a constraint solver decides which features can be removed at each step, and cross-validated CRFE (CRFECV).
 
@@ -35,7 +35,13 @@
 
 ## Installation
 
-`tagarnina` requires Python 3.12 or newer. From a local clone of the repository:
+`tagarnina` requires Python 3.12 or newer. Install the latest release from PyPI:
+
+```bash
+pip install tagarnina
+```
+
+To install from a local clone of the repository instead:
 
 ```bash
 git clone https://github.com/guillermo-navas-palencia/tagarnina.git
@@ -72,7 +78,7 @@ Optional extras:
 ## Getting Started
 
 - **Documentation and API reference:** https://gnpalencia.org/tagarnina/
-- **Examples:** https://gnpalencia.org/tagarnina/auto_examples/index.html.
+- **Examples:** https://gnpalencia.org/tagarnina/auto_examples/index.html
 
 ## Example
 
@@ -109,7 +115,7 @@ print(
 46 categorical and 34 numerical features
 ```
 
-One-hot encoding of the categorical features
+One-hot encode the categorical features:
 
 ```python
 preprocessor = ColumnTransformer(
@@ -137,7 +143,7 @@ print(X_transformed.shape)
 (2930, 352)
 ```
 
-Create all-or-None and maximum correlation constraints
+Create the all-or-none and maximum correlation constraints:
 
 ```python
 all_or_none_constraints = [
@@ -215,8 +221,7 @@ Time         : wall 25.151s (fit 23.366, solve 0.178, score 0.446), cpu 24.078s
 ==========================================================================================================
 ```
 
-Show the selected features
-
+Show the selected features:
 ```python
 selected_features = crfe.get_feature_names_out()
 print(selected_features)
@@ -230,7 +235,7 @@ print(selected_features)
  'Longitude' 'Latitude']
 ```
 
-count the selected categorical and numerical features, including both ``Central_Air`` columns..
+Count the selected categorical and numerical features, including both `Central_Air` columns.
 
 ```python
 selected_categorical = []
@@ -268,4 +273,4 @@ If you use `tagarnina` in academic work, please cite it:
 
 ## License
 
-Distributed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
+Distributed under the Apache License 2.0. See [LICENSE](https://github.com/guillermo-navas-palencia/tagarnina/blob/main/LICENSE) for details.
