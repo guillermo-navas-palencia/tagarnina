@@ -12,7 +12,7 @@ license-files = ["LICENSE"]
 authors = [
     { name = "Guillermo Navas-Palencia", email = "g.navas-palencia@gmail.com" },
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "numpy",
     "pandas",
