@@ -72,9 +72,7 @@ Optional extras:
 ## Getting Started
 
 - **Documentation and API reference:** https://gnpalencia.org/tagarnina/
-- **Examples:** the [examples/](examples/) folder contains sphinx-gallery scripts covering
-  basic and advanced constraints, greedy versus probing strategies, and SHAP-based
-  importance. See [examples/README.rst](examples/README.rst) for an overview.
+- **Examples:** https://gnpalencia.org/tagarnina/auto_examples/index.html.
 
 ## Example
 
@@ -100,28 +98,46 @@ X, y = fetch_openml(data_id=43926, as_frame=True, return_X_y=True, parser="liac-
 categorical_features = X.select_dtypes(exclude="number").columns.tolist()
 numerical_features = X.select_dtypes(include="number").columns.tolist()
 X = pd.get_dummies(X, columns=categorical_features, prefix_sep="=", dtype=int)
+
 groups = {
     feature: [c for c in X.columns if c.startswith(f"{feature}=")]
     for feature in categorical_features
 }
+
 numerical_features = [
     c for c in X.columns if not any(c in cols for cols in groups.values())
 ]
+```
+
+Create all-or-None and maximum correlation constraints
+```python
+all_or_non_constraints = []
+for cols in groups.values():
+    all_or_non_constraints.append(
+        AllOrNoneConstraint(features=cols)
+    )
+
+max_corr_constraint = MaxCorrelationConstraint(
+    features=numerical_features,
+    max_corr=0.7,
+    absolute=True,
+    method="pearson",
+)
 
 constraints = Constraints(
     constraints=[
-        *[AllOrNoneConstraint(features=cols) for cols in groups.values()],
-        MaxCorrelationConstraint(
-            features=numerical_features,
-            max_corr=0.7,
-            absolute=True,
-            method="pearson",
-        ),
+        max_corr_constraint,
+        *all_or_non_constraints
     ]
 )
+```
+
+Use random forest regressor as an estimator. Run CRFE with elimination step=0.1 (10% of the features) and R^2 regression score function.
+```python
+estimator = RandomForestRegressor(max_depth=10, min_samples_leaf=20, random_state=0)
 
 crfe = CRFE(
-    estimator=RandomForestRegressor(max_depth=10, min_samples_leaf=20, random_state=0),
+    estimator=estimator,
     constraints=constraints,
     step=0.1,
     n_features_to_select=20,
@@ -130,13 +146,11 @@ crfe = CRFE(
 )
 crfe.fit(X, y)
 
-print(crfe.get_feature_names_out())
+selected = crfe.get_feature_names_out()
+print(selected)
 ```
 
-With `verbose=2`, the output begins with a banner, the settings, the constraints, and the
-solver and model details. It then shows a table with one row per iteration (`n_features`,
-`removed`, `score`, `retained`, `gap`, and so on) and ends with a summary. The last lines are
-the selected feature names.
+With `verbose=2`, the output begins with a banner, the settings, the constraints, and the solver and model details. It then shows a table with one row per iteration (`n_features`, `removed`, `score`, `retained`, `gap`, and so on) and ends with a summary. The last lines are the selected feature names.
 
 Output of the example above (timings vary between machines):
 
@@ -178,8 +192,7 @@ Time         : wall 77.346s (fit 71.911, solve 0.551, score 0.960), cpu 46.312s
  'Central_Air=Y']
 ```
 
-The next snippet counts the selected categorical and continuous features. It reuses `groups`,
-`numerical_features`, and `selected` from the example above.
+The next snippet counts the selected categorical and continuous features. It reuses `groups`, `numerical_features`, and `selected` from the example above.
 
 ```python
 selected_categorical = [f for f, cols in groups.items() if any(c in selected for c in cols)]
@@ -201,7 +214,7 @@ If you use `tagarnina` in academic work, please cite it:
 ```bibtex
 @software{navas_palencia_tagarnina,
   author  = {Navas-Palencia, Guillermo},
-  title   = {tagarnina: Constrained Feature Selection},
+  title   = {tagarnina: Python library for feature selection with user-defined constraints},
   year    = {2026},
   url     = {https://github.com/guillermo-navas-palencia/tagarnina},
 }

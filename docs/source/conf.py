@@ -42,4 +42,7 @@ html_theme = "pydata_sphinx_theme"
 html_theme_options = {
     "show_nav_level": 2,
     "github_url": "https://github.com/guillermo-navas-palencia/tagarnina",
+    "logo": {"text": f"{project} {version}"},
 }
+html_favicon = "../../branding/favicon.ico"
+html_show_sourcelink = False
