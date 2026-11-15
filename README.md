@@ -1,24 +1,23 @@
-# tagarnina
-
-Constrained Feature Selection
-
+[![CI](https://github.com/guillermo-navas-palencia/tagarnina/actions/workflows/ci.yml/badge.svg)](https://github.com/guillermo-navas-palencia/tagarnina/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://www.python.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-`tagarnina` is a Python library for feature selection with user-defined constraints. It
-implements constrained recursive feature elimination (CRFE), where a constraint solver
-decides which features can be removed at each step, and cross-validated CRFE (CRFECV).
+<p align="center">
+  <img src="icon_images/tagarnina-sphinx-paquete/assets/tagarnina.png" alt="tagarnina logo" width="200">
+</p>
+
+
+**tagarnina** is a Python library for feature selection with user-defined constraints. It implements constrained recursive feature elimination (CRFE), where a constraint solver decides which features can be removed at each step, and cross-validated CRFE (CRFECV).
 
 **Algorithms**
 
-- `CRFE`: recursive feature elimination with constraints. Without constraints it
-  behaves like scikit-learn's `RFE`. Strategies: `"probing"` (default) and `"greedy"`.
+- `CRFE`: recursive feature elimination with constraints. Without constraints it behaves like scikit-learn's `RFE`. Strategies: `"probing"` (default) and `"greedy"`.
 - `CRFECV`: `CRFE` with cross-validation to choose the number of features.
 
 **Constraints** (in `tagarnina.optimization.constraints`)
 
 - `MaxCorrelationConstraint`: limits the pairwise correlation between selected features.
-- `GroupConstraint`, `AtMostKConstraint`, `AtLeastKConstraint`: bound the number of
-  selected features within a group.
+- `GroupConstraint`, `AtMostKConstraint`, `AtLeastKConstraint`: bound the number of selected features within a group.
 - `MinMaxConstraint`: bounds the total number of selected features.
 - `OnlyEnforceIfConstraint`: if `feature1` is selected, `feature2` must be selected.
 - `OnlyExcludeIfConstraint`: if `feature1` is selected, `feature2` cannot be selected.
@@ -37,7 +36,7 @@ decides which features can be removed at each step, and cross-validated CRFE (CR
 
 ## Installation
 
-`tagarnina` requires Python 3.13 or newer. From a local clone of the repository:
+`tagarnina` requires Python 3.12 or newer. From a local clone of the repository:
 
 ```bash
 git clone https://github.com/guillermo-navas-palencia/tagarnina.git
