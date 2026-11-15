@@ -3,7 +3,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 <p align="center">
-  <img src="icon_images/tagarnina-sphinx-paquete/assets/tagarnina.png" alt="tagarnina logo" width="200">
+  <img src="branding/tagarnina.png" alt="tagarnina logo" width="200">
 </p>
 
 
