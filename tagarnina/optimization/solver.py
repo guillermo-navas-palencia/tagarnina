@@ -1,4 +1,5 @@
 import time
+from collections.abc import Sequence
 from typing import Callable
 
 import numpy as np
@@ -186,8 +187,8 @@ class CPSolver:
             self.model, self.x = model, x
 
     def solve_assuming(
-        self, *, literals: list[cp_model.IntVar], subset: list[int]
-    ) -> int:
+        self, *, literals: list[cp_model.IntVar], subset: Sequence[int]
+    ) -> cp_model.CpSolverStatus:
         self.model.clear_assumptions()
         for i in subset:
             self.model.add_assumption(literals[i])

@@ -9,7 +9,7 @@ from typing import Any, Callable
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-from scipy.sparse import issparse
+from scipy.sparse import sparray, spmatrix
 from sklearn.base import BaseEstimator, MetaEstimatorMixin, clone
 from sklearn.feature_selection import SelectorMixin
 from sklearn.utils._param_validation import (
@@ -197,6 +197,8 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         support = np.ones(n_features, dtype=bool)
         ranking = np.ones(n_features, dtype=int)
         termination = Termination.TARGET_REACHED
+        solver = self.solver_
+        assert solver is not None
 
         while True:
             features = np.flatnonzero(support)
@@ -231,7 +233,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             ) + self.importance_offset
 
             start = time.perf_counter()
-            result = self.solver_.eliminate(
+            result = solver.eliminate(
                 weights=weights, ordered=ordered, n_remove=n_remove
             )
             solve_time = time.perf_counter() - start
@@ -282,7 +284,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             for index in removed:
                 if feature_names[index] in candidates:
                     continue
-                self.solver_.build_exclude_constraint(feature=feature_names[index])
+                solver.build_exclude_constraint(feature=feature_names[index])
 
             support = support & solution
             ranking[~support] += 1
@@ -356,7 +358,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
         """Validate the data and return the input used for display and feature
         names, the validated X and y, and the non-numeric DataFrame columns."""
         feature_names = None
-        non_numeric_features = frozenset()
+        non_numeric_features: frozenset[str] = frozenset()
 
         if isinstance(X, pd.DataFrame):
             feature_names = X.columns.tolist()
@@ -391,9 +393,9 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
     def _setup(
         self,
         *,
-        X: npt.NDArray,
+        X: npt.NDArray | sparray | spmatrix,
         feature_names: list[str],
-        non_numeric_features: frozenset,
+        non_numeric_features: frozenset[str],
         n_select: int,
     ) -> float:
         """Set `solver_` for one run (None when unconstrained) and return the
@@ -421,7 +423,7 @@ class BaseCRFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
             **(self.solver_params or {}),
         )
 
-        X_dense = X.toarray() if issparse(X) else X
+        X_dense = X.toarray() if isinstance(X, sparray | spmatrix) else X
         X_df = pd.DataFrame(data=X_dense, columns=feature_names).infer_objects()
 
         build_start = time.perf_counter()

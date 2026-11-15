@@ -68,7 +68,8 @@ def describe_solver(*, solver: "CPSolver") -> list[tuple[str, str]]:
     return [
         (
             "Solver",
-            f"CP-SAT {ortools.__version__}, workers={params.num_workers}, "
+            f"CP-SAT {getattr(ortools, '__version__', 'unknown')}, "
+            f"workers={params.num_workers}, "
             f"time_limit={params.max_time_in_seconds:g}s, "
             f"seed={params.random_seed}",
         ),

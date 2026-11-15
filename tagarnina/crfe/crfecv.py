@@ -171,7 +171,7 @@ class CRFECV(BaseCRFE):
                 n_folds=n_folds,
                 details=(
                     describe_model(solver=self.solver_, build_time=build_time)
-                    if solver
+                    if self.solver_ is not None
                     else []
                 ),
             )
@@ -240,8 +240,8 @@ class CRFECV(BaseCRFE):
 
         log.print_cv_scores(
             sizes=sizes,
-            mean_scores=mean_scores,
-            std_scores=scores.std(axis=0),
+            mean_scores=mean_scores.tolist(),
+            std_scores=scores.std(axis=0).tolist(),
             selected=n_best,
         )
         monitor = Monitoring(
