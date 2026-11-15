@@ -76,15 +76,17 @@ Optional extras:
 
 ## Example
 
-The example uses the [Ames Housing](https://www.openml.org/d/43926) dataset from OpenML, fetched with `fetch_openml`. It contains 2,930 house sales with 80 features, 46 of them categorical (for example `Neighborhood` and `Central_Air`). The target is the continuous sale price, `Sale_Price`, and there are no missing values. The task selects 20 features under two constraints:
+The example uses the [Ames Housing](https://www.openml.org/d/43926) dataset from OpenML, fetched with `fetch_openml`. It contains 2,930 house sales with 80 features. The target is the continuous sale price, `Sale_Price`, and there are no missing values. The task selects 20 features under two constraints:
 
-- `AllOrNoneConstraint`: the one-hot encoded columns of each categorical feature are selected together or not at all.
+- `AllOrNoneConstraint`: one-hot encoded columns of each categorical feature are selected together or not at all.
 - `MaxCorrelationConstraint`: no two selected numerical features have an absolute Pearson correlation above 0.7.
 
 ```python
 import pandas as pd
+from sklearn.compose import ColumnTransformer, make_column_selector
 from sklearn.datasets import fetch_openml
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.preprocessing import OneHotEncoder
 
 from tagarnina.crfe import CRFE
 from tagarnina.optimization.constraints import (
@@ -95,27 +97,55 @@ from tagarnina.optimization.constraints import (
 
 X, y = fetch_openml(data_id=43926, as_frame=True, return_X_y=True, parser="liac-arff")
 
-categorical_features = X.select_dtypes(exclude="number").columns.tolist()
-numerical_features = X.select_dtypes(include="number").columns.tolist()
-X = pd.get_dummies(X, columns=categorical_features, prefix_sep="=", dtype=int)
+categorical_features = X.select_dtypes("category").columns.tolist()
+numerical_features = X.select_dtypes("number").columns.tolist()
 
-groups = {
-    feature: [c for c in X.columns if c.startswith(f"{feature}=")]
-    for feature in categorical_features
-}
+print(
+    f"{len(categorical_features)} categorical and {len(numerical_features)} numerical features"
+)
+```
 
-numerical_features = [
-    c for c in X.columns if not any(c in cols for cols in groups.values())
-]
+```text
+46 categorical and 34 numerical features
+```
+
+One-hot encoding of the categorical features
+
+```python
+preprocessor = ColumnTransformer(
+    transformers=[
+        (
+            "cat",
+            OneHotEncoder(
+                sparse_output=False,
+                feature_name_combiner=lambda feature, category: f"{feature}={category}"
+         ),
+         make_column_selector(dtype_include="category"))
+    ],
+    remainder="passthrough",
+    verbose_feature_names_out=False,
+)
+X_transformed = pd.DataFrame(
+    data=preprocessor.fit_transform(X),
+    columns=preprocessor.get_feature_names_out(),
+)
+
+print(X_transformed.shape)
+```
+
+```text
+(2930, 352)
 ```
 
 Create all-or-None and maximum correlation constraints
+
 ```python
-all_or_non_constraints = []
-for cols in groups.values():
-    all_or_non_constraints.append(
-        AllOrNoneConstraint(features=cols)
+all_or_none_constraints = [
+    AllOrNoneConstraint(
+        features=[c for c in X_transformed.columns if c.startswith(f"{feature}=")]
     )
+    for feature in categorical_features
+]
 
 max_corr_constraint = MaxCorrelationConstraint(
     features=numerical_features,
@@ -127,12 +157,13 @@ max_corr_constraint = MaxCorrelationConstraint(
 constraints = Constraints(
     constraints=[
         max_corr_constraint,
-        *all_or_non_constraints
+        *all_or_none_constraints
     ]
 )
 ```
 
 Use random forest regressor as an estimator. Run CRFE with elimination step=0.1 (10% of the features) and R^2 regression score function.
+
 ```python
 estimator = RandomForestRegressor(max_depth=10, min_samples_leaf=20, random_state=0)
 
@@ -144,13 +175,10 @@ crfe = CRFE(
     scoring="r2",
     verbose=2,
 )
-crfe.fit(X, y)
-
-selected = crfe.get_feature_names_out()
-print(selected)
+crfe.fit(X_transformed, y)
 ```
 
-With `verbose=2`, the output begins with a banner, the settings, the constraints, and the solver and model details. It then shows a table with one row per iteration (`n_features`, `removed`, `score`, `retained`, `gap`, and so on) and ends with a summary. The last lines are the selected feature names.
+With `verbose=2`, the output begins with a banner, the settings, the constraints, and the solver and model details. It then shows a table with one row per iteration and ends with a summary. The last lines are the selected feature names.
 
 Output of the example above (timings vary between machines):
 
@@ -163,48 +191,66 @@ Output of the example above (timings vary between machines):
 Estimator    : RandomForestRegressor
 Data         : 2930 samples, 352 features
 Settings     : step=0.1, n_features_to_select=20, strategy=probing, scoring=r2
-Constraints  : 47 (AllOrNone 46, MaxCorrelation 1)
+Constraints  : 47 (MaxCorrelation 1, AllOrNone 46)
 Solver       : CP-SAT 9.15.6755, workers=1, time_limit=10s, seed=0
-Model        : 704 variables, 628 constraints, built in 2.828s
+Model        : 704 variables, 628 constraints, built in 0.875s
 
 ----------------------------------------------------------------------------------------------------------
  iter   n_features   removed     probes    fit(s)   solve(s)        score   retained       gap  elapsed(s)
 ----------------------------------------------------------------------------------------------------------
-    0          352        49        0|0    17.325      0.075   8.9219e-01     0.9918    0.0082      21.161
-    1          303        45        0|0    11.196      0.066   8.9044e-01     1.0000    0.0000      32.597
-    2          258        54        0|0    11.488      0.053   8.9030e-01     1.0000    0.0000      44.293
-    3          204        47        0|0     9.433      0.049   8.8919e-01     0.9942    0.0058      53.945
-    4          157        54        0|0     6.052      0.037   8.8804e-01     0.9854    0.0146      60.159
-    5          103        51        0|0     9.962      0.260   8.8465e-01     0.9737    0.0263      70.762
-    6           52        32        0|0     5.053      0.011   8.7951e-01     1.0000    0.0000      75.896
-    7           20         -          -     1.403          -   8.7881e-01          -         -      77.345
+    0          352        78        0|0     4.533      0.041   8.9217e-01     0.9918    0.0082       5.580
+    1          274        55        0|0     3.742      0.027   8.9030e-01     1.0000    0.0000       9.434
+    2          219        41        0|0     3.324      0.027   8.8920e-01     1.0000    0.0000      12.880
+    3          178        57        0|0     3.371      0.021   8.8920e-01     0.9794    0.0206      16.360
+    4          121        49        0|0     2.631      0.028   8.8471e-01     0.9739    0.0261      19.126
+    5           72        41        0|0     2.651      0.020   8.7967e-01     1.0000    0.0000      21.893
+    6           31        11        0|0     1.716      0.014   8.7942e-01     1.0000    0.0000      23.704
+    7           20         -          -     1.399          -   8.7879e-01          -         -      25.149
 ----------------------------------------------------------------------------------------------------------
 
 Termination  : reached the target number of features
 Selected     : 20 of 352 features
 Probes       : 0 feasible, 0 infeasible, 0 blocked
-Time         : wall 77.346s (fit 71.911, solve 0.551, score 0.960), cpu 46.312s
+Time         : wall 25.151s (fit 23.366, solve 0.178, score 0.446), cpu 24.078s
 ==========================================================================================================
-['Lot_Area' 'Year_Built' 'Year_Remod_Add' 'Mas_Vnr_Area' 'BsmtFin_SF_1'
- 'Bsmt_Unf_SF' 'Total_Bsmt_SF' 'Second_Flr_SF' 'Gr_Liv_Area'
- 'Bsmt_Full_Bath' 'Full_Bath' 'Bedroom_AbvGr' 'Fireplaces' 'Garage_Cars'
- 'Wood_Deck_SF' 'Open_Porch_SF' 'Longitude' 'Latitude' 'Central_Air=N'
- 'Central_Air=Y']
 ```
 
-The next snippet counts the selected categorical and continuous features. It reuses `groups`, `numerical_features`, and `selected` from the example above.
+Show the selected features
 
 ```python
-selected_categorical = [f for f, cols in groups.items() if any(c in selected for c in cols)]
-selected_continuous = [c for c in numerical_features if c in selected]
-
-print("categorical selected:", len(selected_categorical))
-print("continuous selected:", len(selected_continuous))
+selected_features = crfe.get_feature_names_out()
+print(selected_features)
 ```
 
 ```text
+['Central_Air=N' 'Central_Air=Y' 'Lot_Area' 'Year_Built' 'Year_Remod_Add'
+ 'Mas_Vnr_Area' 'BsmtFin_SF_1' 'Bsmt_Unf_SF' 'Total_Bsmt_SF'
+ 'Second_Flr_SF' 'Gr_Liv_Area' 'Bsmt_Full_Bath' 'Full_Bath'
+ 'Bedroom_AbvGr' 'Fireplaces' 'Garage_Cars' 'Wood_Deck_SF' 'Open_Porch_SF'
+ 'Longitude' 'Latitude']
+```
+
+count the selected categorical and numerical features, including both ``Central_Air`` columns..
+
+```python
+selected_categorical = []
+for feature in categorical_features:
+    columns = [c for c in X_transformed.columns if c.startswith(f"{feature}=")]
+    n_selected = sum(c in selected_features for c in columns)
+    if n_selected:
+        selected_categorical.append(feature)
+        print(f"{feature}: {n_selected} of {len(columns)} columns selected")
+
+selected_numerical = [c for c in numerical_features if c in selected_features]
+
+print("categorical selected:", len(selected_categorical))
+print("numerical selected:", len(selected_numerical))
+```
+
+```text
+Central_Air: 2 of 2 columns selected
 categorical selected: 1
-continuous selected: 18
+numerical selected: 18
 ```
 
 ## Citation
