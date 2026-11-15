@@ -1,11 +1,10 @@
+<p align="center">
+  <img src="branding/tagarnina.png" alt="tagarnina logo" width="300">
+</p>
+
 [![CI](https://github.com/guillermo-navas-palencia/tagarnina/actions/workflows/ci.yml/badge.svg)](https://github.com/guillermo-navas-palencia/tagarnina/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue.svg)](https://www.python.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-
-<p align="center">
-  <img src="branding/tagarnina.png" alt="tagarnina logo" width="200">
-</p>
-
 
 **tagarnina** is a Python library for feature selection with user-defined constraints. It implements constrained recursive feature elimination (CRFE), where a constraint solver decides which features can be removed at each step, and cross-validated CRFE (CRFECV).
 
